@@ -197,7 +197,7 @@ structure:
 # -----------------------------------------------------------------------------
 # Stage 5 — Epsilon RNA / Pol coevolution
 # -----------------------------------------------------------------------------
-epsilun:
+epsilon:
   # epsilon is ~60-70 nt; secondary structure from the literature is a
   # stem-bulge-stem with the priming bulge and an alternative cryptic fold.
   length_nt: [55, 70]
@@ -230,7 +230,10 @@ fitness:
     interface_or_hinge: true
     supported_covariation: true
     not_explained_by_surface_frame: true
-    distinct_from_canonical_motifs: [YMDD, "A-F", "NJG"]
+    # Named motifs excluded from the candidate list.  Tokens resolve against
+    # hbvpol.domain.CANONICAL_MOTIFS (a name) or a letter range ("A-F"); add
+    # e.g. the NJG primer-grip motif there first, then list it here.
+    distinct_from_canonical_motifs: [YMDD, "A-F"]
 
 # -----------------------------------------------------------------------------
 # Stage 7 — Outputs / residue atlas
@@ -246,7 +249,7 @@ atlas:
   report:
     # The report is assembled from dependency-free string templates in
     # hbvpol.atlas.report; no external template file is required.
-    include: [phylogeny, domains, selection, structure, epsilun, fitness]
+    include: [phylogeny, domains, selection, structure, epsilon, fitness]
   ranked_targets:
     # how to build the ranked biochemical-validation shortlist
     weights:

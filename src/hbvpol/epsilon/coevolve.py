@@ -39,7 +39,7 @@ __all__ = [
     "contact_map_energy",
 ]
 
-logger = get_logger("epsilun.coevolve")
+logger = get_logger("epsilon.coevolve")
 
 COEVOLUTION_COLUMNS = [
     "pol_position",
@@ -120,8 +120,8 @@ def _consensus_sequence(sequences: list[str]) -> str:
 
 
 def _window(config: dict, width: int) -> tuple[int, int]:
-    """Resolve ``epsilun.coevolve.residue_window`` to a 0-based column range."""
-    window = get(config, "epsilun.coevolve.residue_window", "TP")
+    """Resolve ``epsilon.coevolve.residue_window`` to a 0-based column range."""
+    window = get(config, "epsilon.coevolve.residue_window", "TP")
     if isinstance(window, bool):
         return 0, width
     if isinstance(window, int):
@@ -176,7 +176,7 @@ def pol_epsilon_coevolution(pol_alignment, epsilon_alignment, config: dict) -> p
     ]
 
     requested = list(
-        get(config, "epsilun.coevolve.rna_features", ["base_pair", "bulge", "loop"])
+        get(config, "epsilon.coevolve.rna_features", ["base_pair", "bulge", "loop"])
         or ["base_pair", "bulge", "loop"]
     )
     start, stop = _window(config, width)
@@ -304,7 +304,7 @@ def compatibility_matrix(pol_by_genotype, epsilon_by_genotype, config: dict) -> 
     if not pol_map or not eps_map:
         return _empty(COMPATIBILITY_COLUMNS)
 
-    predictor = str(get(config, "epsilun.compatibility.predictor", "contact_map_energy"))
+    predictor = str(get(config, "epsilon.compatibility.predictor", "contact_map_energy"))
     if predictor != "contact_map_energy":
         logger.warning("unknown compatibility predictor %r; using contact_map_energy", predictor)
 

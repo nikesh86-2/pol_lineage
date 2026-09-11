@@ -10,7 +10,7 @@ The package is organised by analysis stage, mirroring the study design:
     phylogeny     Stage 2c — per-block and per-domain trees, ancestral states
     selection     Stage 3 — entropy, dual-frame codons, covariation, epistasis
     structure     Stage 4 — multi-predictor structural ensembles and metrics
-    epsilun       Stage 5 — epsilon-RNA folding and Pol:epsilon coevolution
+    epsilon       Stage 5 — epsilon-RNA folding and Pol:epsilon coevolution
     fitness       Stage 6 — deep-mutational-scanning integration
     atlas         Stage 7 — unified residue atlas and ranked target list
 """

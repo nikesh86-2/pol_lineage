@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ..config import get
 from ..io import GenomeRecord, write_fasta
-from ..pipeline import get_logger, run_command
+from ..pipeline import effective_threads, get_logger, run_command
 from .align import as_pairs
 from .trees import _iqtree_executable
 
@@ -113,7 +113,7 @@ def _iqtree_ancestral(tree_path, alignment, config, out_path: Path) -> dict[str,
     workdir.mkdir(parents=True, exist_ok=True)
     alignment_path = workdir / f"{out_path.stem}.fasta"
     write_fasta([GenomeRecord(id=name, seq=seq) for name, seq in pairs], alignment_path)
-    threads = int(get(config, "project.threads", 1) or 1)
+    threads = effective_threads(config)
     pre = workdir / out_path.stem
     run_command(
         [

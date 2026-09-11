@@ -251,7 +251,7 @@ def synthetic_overrides(outdir: str | Path, n_genomes: int = 8) -> list[str]:
         "structure.lineages=['A', 'D']",
         "structure.md.n_models=2",
         "fitness.dms.map=null",
-        "epsilun.fold_models=[nussinov]",
+        "epsilon.fold_models=[nussinov]",
         "atlas.interactive=false",
     ]
 

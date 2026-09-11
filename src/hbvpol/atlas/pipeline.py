@@ -65,7 +65,7 @@ _UPSTREAM = [
     ("selection/genotype_specificity.tsv", {"specificity": "lineage_specific", "fst": "fst"}),
     ("selection/resistance.tsv", {"resistance": "is_resistance_site"}),
     ("fitness/dms_annotated.tsv", {}),
-    ("epsilun/pol_epsilon_coevolution.tsv", {}),
+    ("epsilon/pol_epsilon_coevolution.tsv", {}),
 ]
 
 #: Pair-indexed tables that must be reduced to one support score per position.

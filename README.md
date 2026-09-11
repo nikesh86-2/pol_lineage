@@ -90,7 +90,7 @@ Any config value can be overridden on the command line with dotted keys, e.g.
 | 2. Recombination before trees | `hbvpol.qc`, `hbvpol.recombination` | Circularise at the reference origin, verify ORFs, detect breakpoints with four methods, partition into non-recombinant blocks, infer per-block trees. |
 | 3. Constraints at every level | `hbvpol.selection` | Entropy, the **dual-frame codon model**, covariation/DCA, epistasis, genotype Fst, resistance annotation. |
 | 4. A structural ensemble | `hbvpol.structure` | Multiple states × lineages × predictors × seeds; pLDDT, PAE, domain orientation, catalytic geometry, hinges, MD pocket persistence. |
-| 5. ε RNA + Pol coevolution | `hbvpol.epsilun` | Extract and fold ε, TP-residue × ε-feature covariation, cross-genotype Pol:ε compatibility. |
+| 5. ε RNA + Pol coevolution | `hbvpol.epsilon` | Extract and fold ε, TP-residue × ε-feature covariation, cross-genotype Pol:ε compatibility. |
 | 6. Experimental anchor | `hbvpol.fitness`, `hbvpol.atlas` | Join the 2024 single-nucleotide DMS map, score the six mechanistic criteria, rank candidate targets. |
 | Outputs | `hbvpol.atlas` | Interactive residue atlas, conserved/lineage-specific interaction networks, predicted conformational switches, ranked target list. |
 
@@ -106,7 +106,7 @@ resources/                resistance catalogue, mutants, DMS schema
 src/hbvpol/
   config.py domain.py io/ pipeline.py synthetic.py cli.py
   datasets/ qc/ recombination/ phylogeny/ selection/
-  structure/ epsilun/ fitness/ atlas/
+  structure/ epsilon/ fitness/ atlas/
 scripts/                  run_synthetic.py, profile_stages.py
 workflow/Snakefile        Snakemake orchestration
 tests/                    121 offline tests incl. full end-to-end
@@ -126,7 +126,7 @@ docs/                     methods, datasets, external tools, output contract
 * `selection.*` — domain partition, dual-frame model, covariation/epistasis
   performance guards.
 * `structure.*` — states, lineages, predictors, seeds, MD and hinge thresholds.
-* `epsilun.*` — ε span/folding, covarying features, compatibility predictor.
+* `epsilon.*` — ε span/folding, covarying features, compatibility predictor.
 * `fitness.*` — DMS map path and the six candidacy criteria.
 * `atlas.*` — join key, ranking weights, top-N targets.
 
@@ -165,7 +165,7 @@ documented simplifications you should replace for a publication run:
 * **Domain boundaries** are the approximate genotype-A2 spans in
   `DEFAULT_DOMAIN_SPANS`; refine them per genotype by lifting the reference
   annotation onto the curated alignment.
-* **ε coordinates** (`epsilun.genome_span`) are approximate and origin-aware.
+* **ε coordinates** (`epsilon.genome_span`) are approximate and origin-aware.
 * **Offline fallbacks** (Neighbor-Joining, Fitch parsimony, Nussinov folding,
   pure-Python bootscan, APC-corrected MI for DCA) exist so the pipeline is
   testable with no external tools. Install the real tools for analysis; use the

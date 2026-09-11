@@ -23,6 +23,10 @@ output/*
 !output/.gitkeep
 output-*/
 
+# SLURM job logs (generated)
+workflow/slurm/logs/*
+!workflow/slurm/logs/.gitkeep
+
 # Large or generated structural / sequence artefacts
 *.pdb
 *.cif

@@ -36,7 +36,7 @@ STAGES: dict[str, str] = {
     "tree": "hbvpol.phylogeny.pipeline:run",
     "select": "hbvpol.selection.pipeline:run",
     "structure": "hbvpol.structure.pipeline:run",
-    "epsilon": "hbvpol.epsilun.pipeline:run",
+    "epsilon": "hbvpol.epsilon.pipeline:run",
     "fitness": "hbvpol.fitness.pipeline:run",
     "atlas": "hbvpol.atlas.pipeline:run",
 }

@@ -140,7 +140,7 @@ Pol proteins prefer their own ε and whether apparent Pol conservation masks
 compensatory evolution in RNA.
 
 > **Scaffold note.** The ε span is approximate and origin-aware; refine
-> `epsilun.genome_span` per genotype. Folding falls back to a Nussinov fold when
+> `epsilon.genome_span` per genotype. Folding falls back to a Nussinov fold when
 > RNAfold is absent, and the compatibility predictor is an uncalibrated
 > contact-map-energy heuristic intended for ranking, not for quantitative
 > affinities.

@@ -24,7 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..config import get
-from ..pipeline import StageError, get_logger, have_executable, output_dir, run_command, stage_dir
+from ..pipeline import StageError, effective_threads, get_logger, have_executable, output_dir, run_command, stage_dir
 from .bootscan import run_bootscan
 from .gard import run_gard
 from .partition import (
@@ -70,7 +70,7 @@ def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
         logger.warning("mafft not found; using %s unaligned", input_fasta)
         return input_fasta
 
-    threads = int(get(config, "project.threads", 1) or 1)
+    threads = effective_threads(config)
     try:
         result = run_command(
             ["mafft", "--auto", "--thread", str(threads), str(input_fasta)],

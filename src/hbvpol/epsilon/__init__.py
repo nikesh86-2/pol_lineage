@@ -4,7 +4,7 @@ Extracts the HBV epsilon element from oriented genomes, folds it (RNAfold or an
 offline Nussinov fallback), quantifies Pol-TP/epsilon covariation and builds a
 cross-genotype compatibility matrix.
 
-Public entry point is :func:`hbvpol.epsilun.pipeline.run`.
+Public entry point is :func:`hbvpol.epsilon.pipeline.run`.
 """
 
 from __future__ import annotations

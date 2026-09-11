@@ -1,4 +1,4 @@
-"""Offline unit tests for the epsilun package."""
+"""Offline unit tests for the epsilon package."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from hbvpol.epsilun.coevolve import (
+from hbvpol.epsilon.coevolve import (
     COMPATIBILITY_COLUMNS,
     COEVOLUTION_COLUMNS,
     compatibility_matrix,
     mutual_information,
     pol_epsilon_coevolution,
 )
-from hbvpol.epsilun.fold import (
+from hbvpol.epsilon.fold import (
     DEFAULT_EPSILON_SPAN,
     extract_epsilon,
     fold_epsilon,
@@ -64,7 +64,7 @@ def test_nussinov_fold_respects_min_loop():
 
 
 def test_fold_epsilon_returns_serialisable_result():
-    config = {"epsilun": {"fold_models": ["literature"], "length_nt": [55, 70]}}
+    config = {"epsilon": {"fold_models": ["literature"], "length_nt": [55, 70]}}
     result = fold_epsilon("GGGGAAAACCCC", config)
     assert result["method"] in {"nussinov", "rnafold"}
     assert len(result["dotbracket"]) == result["length"]
@@ -80,7 +80,7 @@ def test_extract_epsilon_slices_default_span():
     start, end = DEFAULT_EPSILON_SPAN
     seq = seq[: start - 1] + "G" * (end - start + 1) + seq[end:]
     record = GenomeRecord(id="x", seq=seq)
-    epsilon = extract_epsilon(record, {"epsilun": {"length_nt": [55, 70]}})
+    epsilon = extract_epsilon(record, {"epsilon": {"length_nt": [55, 70]}})
     assert len(epsilon) == end - start + 1
     assert set(epsilon) == {"G"}
 
@@ -88,7 +88,7 @@ def test_extract_epsilon_slices_default_span():
 def test_extract_epsilon_handles_origin_wrap():
     seq = "".join(chr(ord("A") + (i % 4)) for i in range(100))
     record = GenomeRecord(id="x", seq=seq)
-    config = {"epsilun": {"genome_span": [95, 5], "length_nt": [5, 20]}}
+    config = {"epsilon": {"genome_span": [95, 5], "length_nt": [5, 20]}}
     epsilon = extract_epsilon(record, config)
     assert epsilon == seq[94:100] + seq[0:5]
 
@@ -115,7 +115,7 @@ def test_pol_epsilon_coevolution_ranks_coupled_position():
         pol_seqs.append((ident, pol_base * 5))
         epsilon_seqs.append((ident, "".join(epsilon)))
 
-    config = {"epsilun": {"coevolve": {"residue_window": "TP", "rna_features": ["base_pair", "bulge", "loop"]}}}
+    config = {"epsilon": {"coevolve": {"residue_window": "TP", "rna_features": ["base_pair", "bulge", "loop"]}}}
     frame = pol_epsilon_coevolution(pol_seqs, epsilon_seqs, config)
 
     assert list(frame.columns) == COEVOLUTION_COLUMNS
@@ -127,7 +127,7 @@ def test_pol_epsilon_coevolution_ranks_coupled_position():
 
 
 def test_pol_epsilon_coevolution_empty_without_shared_ids():
-    config = {"epsilun": {"coevolve": {"residue_window": "TP"}}}
+    config = {"epsilon": {"coevolve": {"residue_window": "TP"}}}
     frame = pol_epsilon_coevolution([("a", "AAAA")], [("b", "CCCC")], config)
     assert frame.empty
     assert list(frame.columns) == COEVOLUTION_COLUMNS
@@ -139,7 +139,7 @@ def test_pol_epsilon_coevolution_empty_without_shared_ids():
 def test_compatibility_matrix_shape_and_range():
     pol = {"A": "M" * 200, "B": "K" * 200}
     epsilon = {"A": "GGGGAAAACCCC", "B": "CCCCAAAAGGGG"}
-    config = {"epsilun": {"compatibility": {"predictor": "contact_map_energy"}}}
+    config = {"epsilon": {"compatibility": {"predictor": "contact_map_energy"}}}
 
     frame = compatibility_matrix(pol, epsilon, config)
 
@@ -151,5 +151,5 @@ def test_compatibility_matrix_shape_and_range():
 
 
 def test_compatibility_matrix_empty_without_genotypes():
-    config = {"epsilun": {"compatibility": {"predictor": "contact_map_energy"}}}
+    config = {"epsilon": {"compatibility": {"predictor": "contact_map_energy"}}}
     assert compatibility_matrix({}, {}, config).empty

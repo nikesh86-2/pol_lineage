@@ -64,10 +64,15 @@ def _root(config: dict, root=None) -> Path:
     return Path(injected) if injected else Path(".")
 
 
-def _resolve(config: dict, dotted: str, root: Path) -> Path:
+def _resolve(config: dict, dotted: str, root: Path) -> Path | None:
+    """Resolve a configured path, or ``None`` when unset/blank.
+
+    Returning ``None`` (rather than ``Path("")``, which is ``.`` and therefore
+    *exists*) keeps an unset key from being mistaken for the current directory.
+    """
     value = get(config, dotted)
-    if value is None:
-        return Path("")
+    if value is None or str(value).strip() == "":
+        return None
     path = Path(str(value))
     return path if path.is_absolute() else root / path
 
@@ -79,11 +84,17 @@ def load_dms(config: dict, root=None) -> pd.DataFrame:
     the fitness-anchored candidates to be meaningful.
     """
     path = _resolve(config, "fitness.dms.map", _root(config, root))
-    if not path or not path.exists():
+    if path is None:
+        logger.error(
+            "fitness.dms.map is unset — the 2024 HBV Pol DMS map must be supplied "
+            "for fitness-anchored candidates; emitting an empty, correctly-schemad table"
+        )
+        return pd.DataFrame(columns=DMS_COLUMNS)
+    if not path.exists():
         logger.error(
             "DMS map not found at %s — the 2024 HBV Pol DMS map must be supplied "
             "(fitness.dms.map); emitting an empty, correctly-schemad table",
-            path or "<unset>",
+            path,
         )
         return pd.DataFrame(columns=DMS_COLUMNS)
     try:

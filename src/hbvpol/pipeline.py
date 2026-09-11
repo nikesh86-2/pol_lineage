@@ -24,6 +24,8 @@ __all__ = [
     "run_command",
     "require_executable",
     "have_executable",
+    "available_cpus",
+    "effective_threads",
     "StageError",
 ]
 
@@ -57,6 +59,29 @@ def stage_dir(config: Mapping[str, object], root: str | Path, stage: str) -> Pat
 
 def have_executable(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def available_cpus() -> int:
+    """CPUs actually usable by this process (respects SLURM/cgroup affinity)."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):  # pragma: no cover - non-Linux fallback
+        return max(1, os.cpu_count() or 1)
+
+
+def effective_threads(config: Mapping[str, object], key: str = "project.threads", default: int = 1) -> int:
+    """Configured thread count, clamped to the CPUs available to this process.
+
+    A SLURM allocation can be smaller than ``project.threads``, and some tools
+    (notably IQ-TREE 3) refuse to run when given more threads than cores.  The
+    clamp keeps a large config value safe inside a small allocation without the
+    user having to edit the config per job.
+    """
+    try:
+        requested = int(get(config, key, default) or default)
+    except (TypeError, ValueError):
+        requested = default
+    return max(1, min(requested, available_cpus()))
 
 
 def require_executable(name: str, hint: str = "") -> str:

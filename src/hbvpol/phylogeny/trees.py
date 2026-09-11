@@ -21,7 +21,7 @@ import numpy as np
 
 from ..config import get
 from ..io import GenomeRecord, write_fasta
-from ..pipeline import get_logger, have_executable, run_command
+from ..pipeline import effective_threads, get_logger, have_executable, run_command
 from .align import as_pairs
 
 __all__ = [
@@ -236,7 +236,7 @@ def infer_tree(alignment, out_path, config, prefix: str = "") -> Path:
         try:
             alignment_path = _ensure_alignment_file(alignment, out.parent / f"{stem}.fasta")
             bootstrap = int(get(config, "phylogeny.bootstrap", 1000) or 1000)
-            threads = int(get(config, "project.threads", 1) or 1)
+            threads = effective_threads(config)
             pre = out.parent / stem
             command = [
                 executable,

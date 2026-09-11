@@ -33,7 +33,7 @@ from .fold import extract_epsilon, fold_epsilon
 
 __all__ = ["run"]
 
-logger = get_logger("epsilun")
+logger = get_logger("epsilon")
 
 _GENOTYPE_RE = re.compile(r"genotype[ _-]?([A-HJ])\b", re.IGNORECASE)
 
@@ -172,7 +172,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "genotypes": sorted(set(pol_map) | set(eps_map)),
         "n_compatibility_pairs": int(len(compatibility)),
         "compatibility_predictor": str(
-            get(config, "epsilun.compatibility.predictor", "contact_map_energy")
+            get(config, "epsilon.compatibility.predictor", "contact_map_energy")
         ),
     }
     summary_path = outdir / "epsilon_summary.json"
