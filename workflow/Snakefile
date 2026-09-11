@@ -96,6 +96,7 @@ rule infer_trees:
         f"{RECOMB}/blocks.tsv",
     output:
         tree=f"{PHYLO}/genotype_tree.treefile",
+        ancestral=f"{PHYLO}/ancestral/ancestral_states.tsv",
         summary=f"{PHYLO}/tree_summary.json",
     shell:
         f"{cli('tree')}"
@@ -138,7 +139,9 @@ rule dms_anchor:
 rule structural_ensemble:
     """Stage 4 — multi-state, multi-lineage structural ensembles and metrics."""
     input:
-        f"{PHYLO}/ancestral",
+        # Depend on the ancestral *states* file (a declared output of
+        # infer_trees), not the ancestral/ directory, which no rule produces.
+        f"{PHYLO}/ancestral/ancestral_states.tsv",
     output:
         manifest=f"{STRUCT}/model_manifest.tsv",
         metrics=f"{STRUCT}/metrics.tsv",
@@ -154,6 +157,7 @@ rule residue_atlas:
         f"{SEL}/dual_frame.tsv",
         f"{STRUCT}/hinges.tsv",
         f"{FIT}/dms_annotated.tsv",
+        f"{EPS}/pol_epsilon_coevolution.tsv",
     output:
         atlas=f"{ATLAS}/residue_atlas.parquet",
         ranked=f"{ATLAS}/ranked_targets.tsv",
