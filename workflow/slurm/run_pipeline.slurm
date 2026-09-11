@@ -104,14 +104,20 @@ mkdir -p output runs
 # (hbvpol.pipeline.effective_threads), but this keeps the config consistent.
 export HBVPOL_OVERRIDES="${HBVPOL_OVERRIDES:-project.threads=${CORES}}"
 
+# Forward an NCBI contact e-mail supplied at submit time, so it never has to be
+# written into the repository:  sbatch --export=ALL,NCBI_EMAIL=you@example.org ...
+if [ -n "${NCBI_EMAIL:-}" ]; then
+    export HBVPOL_OVERRIDES="${HBVPOL_OVERRIDES} datasets.hbv.genbank.email=${NCBI_EMAIL}"
+fi
+
 # The human-HBV fetch needs a real contact e-mail for NCBI.
 if [ ! -f "${CONFIG}" ]; then
     echo "ERROR: config not found: ${CONFIG}" >&2
     exit 2
 fi
-if grep -qE '^\s*email:\s*(null|~|)\s*$' "${CONFIG}"; then
-    echo "WARNING: datasets.hbv.genbank.email is unset in ${CONFIG};"
-    echo "         the fetch stage will be skipped. Set it before a real run."
+if [ -z "${NCBI_EMAIL:-}" ] && grep -qE '^\s*email:\s*(null|~|)\s*$' "${CONFIG}"; then
+    echo "WARNING: no NCBI e-mail (NCBI_EMAIL env or datasets.hbv.genbank.email);"
+    echo "         the fetch stage will be skipped and QC will have no input."
 fi
 
 record_tools() {
@@ -140,7 +146,7 @@ if [ "${STAGE}" = "all" ]; then
         ${TARGET}
 else
     echo "== single stage: ${STAGE} =="
-    python -m hbvpol.cli "${STAGE}" -c "${CONFIG}" --root . "project.threads=${CORES}"
+    python -m hbvpol.cli "${STAGE}" -c "${CONFIG}" --root . ${HBVPOL_OVERRIDES}
 fi
 
 echo "finished   : $(date -Is)"

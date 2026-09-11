@@ -37,7 +37,14 @@ sbatch --export=ALL,STAGE=atlas    workflow/slurm/run_pipeline.slurm
 | `STAGE` | `all` | Stage to run, or `all` |
 | `SNAKEMAKE_TARGET` | (empty → full DAG) | Target rule/file passed to Snakemake |
 | `HBVPOL` | `python -m hbvpol.cli` | How stages are invoked |
+| `NCBI_EMAIL` | (unset) | NCBI contact e-mail, forwarded as `datasets.hbv.genbank.email` so it is never committed |
 | `RUN_MD` | `0` | In the GPU script, also run the MD persistence pass |
+
+Example — set the NCBI contact and launch for real:
+
+```bash
+sbatch --export=ALL,NCBI_EMAIL=you@example.org workflow/slurm/run_pipeline.slurm
+```
 
 Example — full run with an alternate config and a larger ensemble:
 
