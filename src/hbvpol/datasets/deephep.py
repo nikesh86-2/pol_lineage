@@ -1,0 +1,334 @@
+"""Deep hepadnavirus / nackednavirus Pol dataset.
+
+This stage builds a broad Pol protein alignment spanning the hepadnavirus host
+range (primate, rodent, bat, avian, reptile, amphibian, fish), optionally adding
+fish nackednaviruses and reverse-transcriptase outgroups.  The alignment is the
+reference frame for the conservation half of the study, so it is kept separate
+from the human-HBV dataset.
+
+Retrieval, alignment and trimming are all *pluggable*:
+
+* :func:`fetch_group_sequences` owns the only network access and can be replaced
+  with a local-data loader in tests or air-gapped runs;
+* :func:`align_sequences` degrades gracefully to the unaligned FASTA when MAFFT
+  is unavailable or fails;
+* trimming (triMAL) is applied only when configured *and* present on ``PATH``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Iterable, Mapping, cast
+
+from ..config import get
+from ..io import GenomeRecord, write_fasta
+from ..pipeline import (
+    StageError,
+    get_logger,
+    have_executable,
+    require_executable,
+    run_command,
+    stage_dir,
+)
+
+__all__ = [
+    "run",
+    "build_deephep_dataset",
+    "fetch_group_sequences",
+    "filter_by_length",
+    "align_sequences",
+    "maybe_trim_alignment",
+]
+
+#: Taxon queries for the configured host groups.  These are working defaults —
+#: they are overridable per group via ``deephep.group_queries``.
+DEFAULT_GROUP_QUERIES: dict[str, str] = {
+    "primate": 'Hepadnaviridae[Organism] AND (primates[Host] OR Homo sapiens[Host])',
+    "rodent": "Hepadnaviridae[Organism] AND Rodentia[Host]",
+    "bat": "Hepadnaviridae[Organism] AND Chiroptera[Host]",
+    "avian": "Avihepadnavirus[Organism]",
+    "reptile": "Hepadnaviridae[Organism] AND Reptilia[Host]",
+    "amphibian": "Hepadnaviridae[Organism] AND Amphibia[Host]",
+    "fish": "Hepadnaviridae[Organism] AND fishes[Host]",
+    "nackednavirus": "Nackednaviridae[Organism]",
+}
+
+#: Appended to taxon queries so that only Pol-family proteins are retrieved.
+DEFAULT_QUERY_SUFFIX = 'AND (polymerase[Title] OR "reverse transcriptase"[Title])'
+
+
+# --------------------------------------------------------------------------- #
+# pure filtering helpers
+# --------------------------------------------------------------------------- #
+
+
+def filter_by_length(
+    records: Iterable[GenomeRecord],
+    min_length: int,
+    max_length: int,
+) -> list[GenomeRecord]:
+    """Keep records whose sequence length is within the inclusive bounds."""
+    return [record for record in records if min_length <= len(record.seq) <= max_length]
+
+
+def _dedupe(records: Iterable[GenomeRecord]) -> list[GenomeRecord]:
+    seen: set[str] = set()
+    unique: list[GenomeRecord] = []
+    for record in records:
+        if record.id in seen:
+            continue
+        seen.add(record.id)
+        unique.append(record)
+    return unique
+
+
+def _group_query(group: str, config: Mapping[str, Any]) -> str:
+    """Resolve the Entrez query for a taxonomic group or outgroup name."""
+    overrides = get(config, "deephep.group_queries", {}) or {}
+    if group in overrides:
+        base = str(overrides[group])
+    elif group in DEFAULT_GROUP_QUERIES:
+        base = DEFAULT_GROUP_QUERIES[group]
+    else:
+        base = group  # free-text term, e.g. a plant pararetrovirus family
+
+    suffix = get(config, "deephep.query_suffix", DEFAULT_QUERY_SUFFIX) or ""
+    if suffix and "polymerase" not in base.lower():
+        return f"({base}) {suffix}"
+    return base
+
+
+# --------------------------------------------------------------------------- #
+# retrieval (network is confined here)
+# --------------------------------------------------------------------------- #
+
+
+def _iter_protein_batches(entrez: Any, seqio: Any, ids: list[str], batch_size: int):
+    """Yield protein FASTA records for ``ids`` in ``efetch`` batches."""
+    for start in range(0, len(ids), batch_size):
+        chunk = ids[start : start + batch_size]
+        with entrez.efetch(
+            db="protein", id=",".join(chunk), rettype="fasta", retmode="text"
+        ) as handle:
+            yield from seqio.parse(handle, "fasta")
+
+
+def fetch_group_sequences(group: str, config: Mapping[str, Any]) -> list[GenomeRecord]:
+    """Retrieve Pol protein sequences for one taxonomic group via NCBI.
+
+    ``group`` is a key in :data:`DEFAULT_GROUP_QUERIES` (primate, rodent, bat,
+    avian, reptile, amphibian, fish, nackednavirus) or an arbitrary free-text
+    term used for outgroups.  All network access lives in this function.
+    """
+    from Bio import Entrez, SeqIO  # lazy: importing the module needs no network
+
+    email = get(config, "datasets.hbv.genbank.email") or get(config, "deephep.email")
+    if not email:
+        raise StageError(
+            "deep hepadnavirus retrieval requires datasets.hbv.genbank.email "
+            "(or deephep.email) to be set for NCBI E-utilities"
+        )
+
+    Entrez.email = str(email)
+    Entrez.tool = "hbvpol"
+    api_key = get(config, "datasets.hbv.genbank.api_key")
+    if api_key:
+        Entrez.api_key = str(api_key)
+
+    query = _group_query(group, config)
+    limit = int(get(config, "deephep.max_per_group", 500) or 500)
+    batch_size = int(get(config, "deephep.fetch_batch_size", 200) or 200)
+    logger = get_logger("datasets.deephep")
+
+    with Entrez.esearch(db="protein", term=query, retmax=limit, idtype="acc") as handle:
+        search = cast(dict[str, Any], Entrez.read(handle))
+    ids = [str(item) for item in search.get("IdList", [])]
+    if not ids:
+        logger.info("deephep: no protein hits for %s", group)
+        return []
+
+    records: list[GenomeRecord] = []
+    for record in _iter_protein_batches(Entrez, SeqIO, ids, batch_size):
+        seq = str(record.seq).upper()
+        records.append(
+            GenomeRecord(
+                id=str(record.id),
+                seq=seq,
+                description=str(getattr(record, "description", "") or ""),
+                source=f"deephep:{group}",
+                metadata={"group": group},
+            )
+        )
+    logger.info("deephep: %s -> %d protein sequences", group, len(records))
+    return records
+
+
+# --------------------------------------------------------------------------- #
+# alignment / trimming
+# --------------------------------------------------------------------------- #
+
+
+def _copy_unaligned(in_fasta: Path, out_fasta: Path) -> Path:
+    out_fasta.parent.mkdir(parents=True, exist_ok=True)
+    text = in_fasta.read_text(encoding="utf-8") if in_fasta.exists() else ""
+    out_fasta.write_text(text, encoding="utf-8")
+    return out_fasta
+
+
+def _format_tool_log(argv: list[str], result: Any) -> str:
+    header = f"# command: {' '.join(argv)}\n# exit: {result.returncode}\n\n"
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
+    return f"{header}{stdout}\n{stderr}"
+
+
+def align_sequences(in_fasta: str | Path, out_fasta: str | Path, config: Mapping[str, Any]) -> Path:
+    """Align ``in_fasta`` to ``out_fasta``, falling back to the unaligned copy.
+
+    Only MAFFT is currently wired up.  Absence of the executable, a non-zero
+    exit, or empty output all result in the unaligned sequences being copied and
+    a warning being logged, so the stage never hard-fails on tooling.
+    """
+    in_fasta = Path(in_fasta)
+    out_fasta = Path(out_fasta)
+    logger = get_logger("datasets.deephep")
+
+    aligner = str(get(config, "deephep.aligner", "") or "").strip().lower()
+    if not aligner or aligner in {"none", "false", "unaligned", "off"}:
+        logger.warning("deephep: no aligner configured; writing unaligned sequences")
+        return _copy_unaligned(in_fasta, out_fasta)
+
+    if not aligner.startswith("mafft"):
+        logger.warning("deephep: unsupported aligner %r; writing unaligned sequences", aligner)
+        return _copy_unaligned(in_fasta, out_fasta)
+
+    try:
+        executable = require_executable(
+            "mafft", hint="install MAFFT or set deephep.aligner to 'none'"
+        )
+    except StageError as exc:
+        logger.warning("deephep: %s; writing unaligned sequences", exc)
+        return _copy_unaligned(in_fasta, out_fasta)
+
+    argv = [executable]
+    if "linsi" in aligner:
+        argv += ["--localpair", "--maxiterate", "1000"]
+    elif "einsi" in aligner:
+        argv += ["--genafpair", "--maxiterate", "1000"]
+    elif "ginsi" in aligner:
+        argv += ["--globalpair", "--maxiterate", "1000"]
+    else:
+        argv += ["--auto"]
+    argv += ["--quiet", str(in_fasta)]
+
+    log_path = out_fasta.with_suffix(".log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    result = run_command(argv, check=False)
+    log_path.write_text(_format_tool_log(argv, result), encoding="utf-8")
+
+    if result.returncode != 0 or not (result.stdout or "").strip():
+        logger.warning(
+            "deephep: MAFFT failed (exit %s); writing unaligned sequences (see %s)",
+            result.returncode,
+            log_path,
+        )
+        return _copy_unaligned(in_fasta, out_fasta)
+
+    out_fasta.parent.mkdir(parents=True, exist_ok=True)
+    out_fasta.write_text(result.stdout, encoding="utf-8")
+    logger.info("deephep: MAFFT alignment written to %s (log: %s)", out_fasta, log_path)
+    return out_fasta
+
+
+def maybe_trim_alignment(path: str | Path, config: Mapping[str, Any]) -> Path:
+    """Trim an alignment in place with triMAL when configured and available."""
+    path = Path(path)
+    logger = get_logger("datasets.deephep")
+
+    requested = [str(item).strip().lower() for item in (get(config, "deephep.trim", []) or [])]
+    if "trimal" not in requested and "trimal-automated1" not in requested:
+        return path
+    if not have_executable("trimal"):
+        logger.warning("deephep: triMAL requested but not on PATH; keeping untrimmed alignment")
+        return path
+
+    trimmed = path.with_suffix(".trim.fasta")
+    result = run_command(
+        ["trimal", "-in", str(path), "-out", str(trimmed), "-automated1"],
+        check=False,
+    )
+    if result.returncode != 0 or not trimmed.exists() or trimmed.stat().st_size == 0:
+        logger.warning("deephep: triMAL failed; keeping untrimmed alignment")
+        return path
+    trimmed.replace(path)
+    logger.info("deephep: triMAL trimming applied to %s", path)
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# stage entry points
+# --------------------------------------------------------------------------- #
+
+
+def build_deephep_dataset(
+    config: Mapping[str, Any],
+    out_fasta: str | Path,
+    out_alignment: str | Path,
+) -> dict[str, Path]:
+    """Build the deep-hepadnavirus Pol FASTA and its alignment.
+
+    Partial retrieval failures are logged per group and do not abort the stage.
+    """
+    logger = get_logger("datasets.deephep")
+    out_fasta = Path(out_fasta)
+    out_alignment = Path(out_alignment)
+
+    terms: list[str] = [str(g) for g in (get(config, "deephep.taxonomic_groups", []) or [])]
+    if get(config, "deephep.include_nackednavirus", False):
+        terms.append("nackednavirus")
+    if get(config, "deephep.include_rt_outgroups", False):
+        terms.extend(str(item) for item in (get(config, "deephep.outgroups", []) or []))
+
+    collected: list[GenomeRecord] = []
+    counts: dict[str, int] = {}
+    for term in terms:
+        try:
+            group_records = fetch_group_sequences(term, config)
+        except Exception as exc:  # noqa: BLE001 - one bad group must not kill the stage
+            logger.warning("deephep: could not retrieve %s (%s)", term, exc)
+            group_records = []
+        counts[term] = len(group_records)
+        collected.extend(group_records)
+
+    unique = _dedupe(collected)
+    min_length = int(get(config, "deephep.min_pol_length", 0) or 0)
+    max_length = int(get(config, "deephep.max_pol_length", 10**9) or 10**9)
+    filtered = filter_by_length(unique, min_length, max_length)
+    logger.info(
+        "deephep: retrieved %d sequences (%s), %d pass length filter %d-%d",
+        len(unique),
+        counts,
+        len(filtered),
+        min_length,
+        max_length,
+    )
+
+    write_fasta(filtered, out_fasta)
+    if not filtered:
+        out_alignment.parent.mkdir(parents=True, exist_ok=True)
+        out_alignment.write_text("", encoding="utf-8")
+        return {"deephep_pol": out_fasta, "deephep_alignment": out_alignment}
+
+    aligned = align_sequences(out_fasta, out_alignment, config)
+    aligned = maybe_trim_alignment(aligned, config)
+    return {"deephep_pol": out_fasta, "deephep_alignment": aligned}
+
+
+def run(config: Mapping[str, Any], root: str | Path) -> dict[str, Path]:
+    """Package entry point: build the deep hepadnavirus dataset under the stage dir."""
+    stage = stage_dir(config, root, "datasets")
+    return build_deephep_dataset(
+        config,
+        out_fasta=stage / "deephep_pol.fasta",
+        out_alignment=stage / "deephep_alignment.fasta",
+    )

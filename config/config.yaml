@@ -1,0 +1,257 @@
+# =============================================================================
+# hbvpol master configuration
+# -----------------------------------------------------------------------------
+# Every stage of the pipeline is driven from this file.  Paths are relative to
+# the project root unless absolute.  Command-line overrides use dot notation:
+#     hbvpol run selection.entropy_window=50
+# =============================================================================
+
+project:
+  name: hbv-pol-lineage
+  output_root: output            # all generated artefacts land below here
+  threads: 8
+  seed: 20240911
+
+# -----------------------------------------------------------------------------
+# Stage 1a — Human-HBV dataset
+# -----------------------------------------------------------------------------
+datasets:
+  hbv:
+    # Prefer NCBI GenBank as the sequence-of-record; use HBVdb for an
+    # independently annotated cross-check; HBV-GLUE for its maintained
+    # alignments, genotype assignments and SAM/BAM offline analysis.
+    sources:
+      - genbank
+      - hbvdb
+      - glue
+    genbank:
+      # Full-text query executed against NCBI E-utilities / efetch.
+      query: >-
+        "Hepatitis B virus"[Organism] AND
+        (complete genome[Title] OR complete sequence[Title])
+      max_records: 60000
+      email: null                # REQUIRED for NCBI: set to a real address
+      api_key: null              # optional, raises rate limit
+    hbvdb:
+      base_url: https://hbvdb.ibcp.fr
+      # HBVdb is independently curated but check its release date before
+      # treating it as the sequence-of-record (see docs/datasets.md).
+      max_release_age_days: 730
+    glue:
+      accession: HBV
+      # HBV-GLUE ships maintained alignments + a genotype reference set.
+      use_maintained_alignment: true
+      use_genotype_reference: true
+    metadata:
+      require: [genotype, country, year]
+      desirable: [subgenotype, isolation_source, treatment_status, patient_id]
+      allow_missing: true
+    longitudinal:
+      # Link reads from the same patient_id sampled on different dates.
+      enabled: true
+      min_timepoints: 2
+
+# -----------------------------------------------------------------------------
+# Stage 1b — Deep hepadnavirus / nackednavirus Pol alignment
+# -----------------------------------------------------------------------------
+deephep:
+  taxonomic_groups:
+    - primate
+    - rodent
+    - bat
+    - avian
+    - reptile
+    - amphibian
+    - fish
+  include_nackednavirus: true          # fish nackednaviruses (defensible orthologs)
+  include_rt_outgroups: true           # carefully chosen RT-family outgroups
+  outgroups:
+    - "Caulimoviridae"                 # plant pararetroviruses (RT homologues)
+    - "Ty3/Gypsy LTR retrotransposons"
+  min_pol_length: 500
+  max_pol_length: 1200
+  # Alignment: MAFFT L-INS-i for < 200 seqs, then HMMER/Pfam-guided profile
+  aligner: mafft-linsi
+  profile_hmm: null                    # e.g. Pfam PF00078 (RT) to anchor
+  trim: [gblocks]                      # gblocks | trimAl | none
+
+# -----------------------------------------------------------------------------
+# Stage 2 — Quality control and recombination
+# -----------------------------------------------------------------------------
+reference:
+  # HBV genotype A2 reference (NC_003977, 3215 bp, 843 aa Pol).
+  accession: NC_003977
+  length: 3215
+  # Circularisation origin, in standard HBV numbering.  The unique EcoRI site
+  # defines nt 1, so recutting at the canonical origin is the identity for
+  # records already in standard numbering.  Set qc.detect_origin=true and
+  # reference.sequence to recover the origin for arbitrarily rotated records.
+  origin_nt: 1
+  pol_start_nt: 2307                   # P ORF start (A2 convention, wraps origin)
+  pol_end_nt: 1623                     # P ORF end, wraps the origin
+  # Optional explicit ORF spans (standard A2 defaults are used if omitted):
+  # s_start_nt: 155
+  # s_end_nt: 835
+  # c_start_nt: 1901
+  # c_end_nt: 2450
+
+qc:
+  min_length: 2800
+  max_ambiguous_frac: 0.02             # N / IUPAC gaps
+  require_complete_orf: [pol, s, c]    # reject frameshift/stop-riddled records
+  exclude_stop_in_pol: true
+  max_internal_stops: 0
+  circularise: true                    # all genomes recut at reference origin
+  dereplicate: true
+  dereplicate_identity: 0.9999
+
+recombination:
+  tools: [rdp5, gard, threeseq, bootscan]
+  # A breakpoint is accepted when >= this fraction of independent tools agree.
+  consensus_frac: 0.5
+  min_block_len: 300
+  min_seqs_for_scan: 4
+  gard:
+    rate_variation: gamma
+    n_categories: 4
+  rdp5:
+    executable: rdp5
+    discontiguous: false
+    # Detect individual domains of Pol separately, then reconcile.
+    domain_wise: true
+  bootscan:
+    window: 500
+    step: 50
+    replicates: 100
+    threshold: 0.70
+  # After partitioning, retain only blocks carrying a majority of the
+  # recombination signal-free evidence.
+  min_retained_frac: 0.6
+  # Explicitly model the B/C hotspot described in the literature.
+  hotspots: ["BC"]                     # flag + prioritise B/C recombinants
+
+# -----------------------------------------------------------------------------
+# Stage 3 — Multi-level evolutionary constraints
+# -----------------------------------------------------------------------------
+selection:
+  domains: [TP, spacer, RT, RNaseH]    # Pol is partitioned into these units
+  dual_frame: true                     # classify each change in Pol AND surface
+  window: 21                           # sliding-window width (codons)
+  methods: [fel, meme, fubar, busted]
+  # Per-site selection runs on the recombination-free block supermatrix.
+  per_block: true
+  covariation:
+    methods: [mutual_information, dca]
+    dca_impl: plmDCA
+    min_seqs: 500
+    # Pairwise metrics are O(L^2). Scan only variable columns, and cap them.
+    min_entropy: 0.05          # bits; skip near-invariant columns
+    max_positions: 600         # performance guard (keep the most entropic)
+    top_n: 2000                # cap reported pairs per method
+  epistasis:
+    method: pairwise_epistasis
+    min_support: 0.05
+    min_entropy: 0.05
+    max_positions: 600
+    top_n: 2000
+  genotype_specificity:
+    # Fraction of between-genotype variance to treat a site as informative.
+    min_fst: 0.25
+  drug_resistance:
+    catalogue: resources/hbv_pol_resistance.tsv
+  structural:
+    # Solvent accessibility / pLDDT joined from the structure stage.
+    join_on: [lineage, position]
+
+# -----------------------------------------------------------------------------
+# Stage 4 — Structural ensemble
+# -----------------------------------------------------------------------------
+structure:
+  strategies: [colabfold, alphafold3, esmfold]   # multiple predictors
+  seeds: 5
+  states:
+    - apo
+    - eps_bound
+    - priming
+    - rna_dna_hybrid
+    - elongation
+  lineages: [A, B, C, D, E, F, G, H]             # genotype-specific models
+  mutants_file: resources/pol_mutants.tsv        # resistant + compensatory
+  metrics:
+    - plddt
+    - pae
+    - domain_orientation
+    - catalytic_geometry
+    - nucleic_acid_compatibility
+    - conserved_packing
+  # Regions below this pLDDT are retained and reclassified as candidate hinges.
+  hinge_plddt: 70
+  md:
+    engine: gromacs
+    forcefield: amber14sb
+    water: tip3p
+    ns_per_model: 100
+    n_models: 20                                 # 10-20 prioritised models
+    pocket_persistence_frac: 0.5                 # transient-cavity criterion
+
+# -----------------------------------------------------------------------------
+# Stage 5 — Epsilon RNA / Pol coevolution
+# -----------------------------------------------------------------------------
+epsilun:
+  # epsilon is ~60-70 nt; secondary structure from the literature is a
+  # stem-bulge-stem with the priming bulge and an alternative cryptic fold.
+  length_nt: [55, 70]
+  fold_models: [literature, rnafold, alphafold3_rna]
+  # Covariation between TP residues and epsilon base pairs.
+  coevolve:
+    method: mutual_information
+    residue_window: TP
+    rna_features: [base_pair, bulge, loop]
+  compatibility:
+    # Predict Pol-epsilon affinity for every (genotype Pol, genotype epsilon) pair.
+    matrix: cross_genotype
+    predictor: contact_map_energy
+
+# -----------------------------------------------------------------------------
+# Stage 6 — Experimental fitness anchor
+# -----------------------------------------------------------------------------
+fitness:
+  dms:
+    # 2024 single-nucleotide-resolution deep mutational scanning fitness map
+    # of HBV polymerase (cis-preferential reverse transcription / ribosome
+    # pausing).  Provide as a tidy TSV: wt_nt, position, mut_nt, fitness.
+    map: resources/hbv_pol_dms_2024.tsv
+    wt_reference: NC_003977
+    join_on_nt: true
+  criteria:
+    # A residue is a strong mechanistic candidate when it satisfies all of:
+    conserved_deep_hepadna: true
+    intolerant_dms: true
+    interface_or_hinge: true
+    supported_covariation: true
+    not_explained_by_surface_frame: true
+    distinct_from_canonical_motifs: [YMDD, "A-F", "NJG"]
+
+# -----------------------------------------------------------------------------
+# Stage 7 — Outputs / residue atlas
+# -----------------------------------------------------------------------------
+atlas:
+  interactive: true
+  formats: [tsv, parquet, html]
+  # The unified per-position table joins every score computed above.
+  key: [lineage, pol_position]
+  # Restrict the atlas to annotated Pol residues (drop positions outside TP /
+  # spacer / RT / RNaseH).  Set true to retain genome-wide rows.
+  include_unannotated: false
+  report:
+    # The report is assembled from dependency-free string templates in
+    # hbvpol.atlas.report; no external template file is required.
+    include: [phylogeny, domains, selection, structure, epsilun, fitness]
+  ranked_targets:
+    # how to build the ranked biochemical-validation shortlist
+    weights:
+      conservation: 0.3
+      dms_intolerance: 0.3
+      structural_interface: 0.2
+      covariation: 0.2
+    top_n: 50

@@ -1,0 +1,35 @@
+# =============================================================================
+# hbvpol — external command-line tools (bioconda)
+# -----------------------------------------------------------------------------
+#   mamba env update -n pol -f environment-tools.yml
+#
+# These are the CLI programs the workflow shells out to.  They are separated
+# from environment.yml so the Python stack can be solved and updated quickly.
+# =============================================================================
+name: pol
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  # --- alignment -------------------------------------------------------------
+  - mafft>=7.520             # multiple alignment (L-INS-i / E-INS-i)
+  - hmmer>=3.3.2             # hmmsearch against Pfam RT profile (PF00078)
+  - muscle>=5.1
+  - trimal>=1.4              # alignment trimming (gblocks-like)
+  - cd-hit>=4.8.1            # sequence dereplication
+
+  # --- phylogenetics & selection --------------------------------------------
+  - iqtree>=2.2              # ModelFinder, ML trees, ancestral reconstruction
+  - raxml-ng>=1.2
+  - hyphy>=2.5.5             # GARD + FEL/MEME/FUBAR/BUSTED
+
+  # --- structure / MD --------------------------------------------------------
+  - openmm>=8.0              # MD fallback when GROMACS is unavailable
+  - pdbfixer>=1.9
+  - biotite>=0.38            # PDB/mmCIF + SASA
+  - freesasa>=2.2
+  - dssp>=4.0                # secondary structure
+  # GROMACS: install from conda-forge if you need the documented default;
+  #   mamba install -n pol -c conda-forge gromacs

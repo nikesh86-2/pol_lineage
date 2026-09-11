@@ -1,0 +1,162 @@
+# =============================================================================
+# hbvpol Snakemake workflow
+# -----------------------------------------------------------------------------
+# Run from the repository root so that config and relative output paths resolve:
+#
+#   snakemake -s workflow/Snakefile -j 8            # full pipeline
+#   snakemake -s workflow/Snakefile -j 8 atlas      # up to the residue atlas
+#
+# For a network-free trial run on synthetic data, use scripts/run_synthetic.py,
+# which fabricates a tiny dataset and executes every stage locally.
+#
+# Every rule shells out to the same `hbvpol` CLI that manual runs use, so the
+# workflow and the command line can never drift apart.  Install the package
+# (pip install -e .) or set HBVPOL="PYTHONPATH=src python -m hbvpol.cli".
+# =============================================================================
+
+import os
+
+configfile: "config/config.yaml"
+
+OUT = config["project"]["output_root"]
+HBVPOL = os.environ.get("HBVPOL", "python -m hbvpol.cli")
+OVERRIDES = os.environ.get("HBVPOL_OVERRIDES", "")
+cwd = os.getcwd()
+
+
+def cli(stage: str) -> str:
+    """Shell command invoking one pipeline stage with any global overrides."""
+    extra = f" {OVERRIDES}" if OVERRIDES else ""
+    return f"{HBVPOL} {stage} -c config/config.yaml --root .{extra}"
+
+
+DATASETS = f"{OUT}/datasets"
+QC = f"{OUT}/qc"
+RECOMB = f"{OUT}/recombination"
+PHYLO = f"{OUT}/phylogeny"
+SEL = f"{OUT}/selection"
+EPS = f"{OUT}/epsilon"
+FIT = f"{OUT}/fitness"
+STRUCT = f"{OUT}/structure"
+ATLAS = f"{OUT}/atlas"
+
+
+rule all:
+    input:
+        f"{ATLAS}/residue_atlas.parquet",
+        f"{ATLAS}/ranked_targets.tsv",
+        f"{ATLAS}/report.html",
+
+
+rule fetch_human_hbv:
+    """Stage 1a — retrieve complete human-HBV genomes + metadata (network)."""
+    output:
+        genomes=f"{DATASETS}/hbv_genomes.fasta",
+        metadata=f"{DATASETS}/hbv_metadata.tsv",
+    shell:
+        f"{cli('fetch')}"
+
+
+rule build_deephepadnavirus:
+    """Stage 1b — assemble the deep hepadnavirus / nackednavirus Pol alignment."""
+    output:
+        pol=f"{DATASETS}/deephep_pol.fasta",
+        alignment=f"{DATASETS}/deephep_alignment.fasta",
+    shell:
+        f"{cli('deephep')}"
+
+
+rule qc_circularise_and_filter:
+    """Stage 2a — recut at the reference origin and filter broken ORFs."""
+    input:
+        f"{DATASETS}/hbv_genomes.fasta",
+    output:
+        oriented=f"{QC}/hbv_oriented.fasta",
+        passed=f"{QC}/hbv_qc_pass.tsv",
+        failed=f"{QC}/hbv_qc_fail.tsv",
+    shell:
+        f"{cli('qc')}"
+
+
+rule detect_recombination:
+    """Stage 2b — RDP5/GARD/3SEQ/bootscan and non-recombinant partitioning."""
+    input:
+        f"{QC}/hbv_oriented.fasta",
+    output:
+        breakpoints=f"{RECOMB}/breakpoints.tsv",
+        blocks=f"{RECOMB}/blocks.tsv",
+        summary=f"{RECOMB}/recombination_summary.json",
+    shell:
+        f"{cli('recombine')}"
+
+
+rule infer_trees:
+    """Stage 2c — per-block and per-domain trees plus ancestral sequences."""
+    input:
+        f"{RECOMB}/blocks.tsv",
+    output:
+        tree=f"{PHYLO}/genotype_tree.treefile",
+        summary=f"{PHYLO}/tree_summary.json",
+    shell:
+        f"{cli('tree')}"
+
+
+rule evolutionary_constraints:
+    """Stage 3 — entropy, dual-frame codon model, covariation, genotype Fst."""
+    input:
+        f"{PHYLO}/genotype_tree.treefile",
+    output:
+        entropy=f"{SEL}/entropy.tsv",
+        dual_frame=f"{SEL}/dual_frame.tsv",
+        covariation=f"{SEL}/covariation.tsv",
+    shell:
+        f"{cli('select')}"
+
+
+rule epsilon_coevolution:
+    """Stage 5 — epsilon folding and Pol:epsilon covariation/compatibility."""
+    input:
+        f"{QC}/hbv_oriented.fasta",
+    output:
+        epsilon=f"{EPS}/epsilon_sequences.fasta",
+        coevolution=f"{EPS}/pol_epsilon_coevolution.tsv",
+    shell:
+        f"{cli('epsilon')}"
+
+
+rule dms_anchor:
+    """Stage 6 — annotate the deep-mutational-scanning fitness map."""
+    input:
+        f"{SEL}/entropy.tsv",
+    output:
+        annotated=f"{FIT}/dms_annotated.tsv",
+        candidates=f"{FIT}/dms_candidates.tsv",
+    shell:
+        f"{cli('fitness')}"
+
+
+rule structural_ensemble:
+    """Stage 4 — multi-state, multi-lineage structural ensembles and metrics."""
+    input:
+        f"{PHYLO}/ancestral",
+    output:
+        manifest=f"{STRUCT}/model_manifest.tsv",
+        metrics=f"{STRUCT}/metrics.tsv",
+        hinges=f"{STRUCT}/hinges.tsv",
+    shell:
+        f"{cli('structure')}"
+
+
+rule residue_atlas:
+    """Stage 7 — join everything into the interactive residue atlas."""
+    input:
+        f"{SEL}/entropy.tsv",
+        f"{SEL}/dual_frame.tsv",
+        f"{STRUCT}/hinges.tsv",
+        f"{FIT}/dms_annotated.tsv",
+    output:
+        atlas=f"{ATLAS}/residue_atlas.parquet",
+        ranked=f"{ATLAS}/ranked_targets.tsv",
+        report=f"{ATLAS}/report.html",
+    shell:
+        f"{cli('atlas')}"
