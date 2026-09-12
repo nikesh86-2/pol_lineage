@@ -1,2 +1,8 @@
 genotype	start_nt	end_nt	source
-default	1846	1905	literature span, reference numbering (EcoRI origin); calibrate per genotype
+default	1846	1905	literature span, reference numbering (EcoRI origin); calibrate per genotype with scripts/locate_epsilon.py
+A	1846	1905	auto-calibrated by local alignment of a 60-nt epsilon query to genotype_A.fasta normalised to the reference frame (strand +, shift 1407); identity 96.7%, coverage 100.0%; verify before use
+B	1846	1905	auto-calibrated by local alignment of a 60-nt epsilon query to genotype_B.fasta normalised to the reference frame (strand +, shift 3213); identity 100.0%, coverage 100.0%; verify before use
+C	1846	1905	auto-calibrated by local alignment of a 60-nt epsilon query to genotype_C.fasta normalised to the reference frame (strand +, shift 3213); identity 96.7%, coverage 100.0%; verify before use
+D	1846	1905	auto-calibrated by local alignment of a 60-nt epsilon query to genotype_D.fasta normalised to the reference frame (strand -, shift 3178); identity 100.0%, coverage 100.0%; verify before use
+E	1846	1905	auto-calibrated by local alignment of a 60-nt epsilon query to genotype_E.fasta normalised to the reference frame (strand +, shift 3210); identity 100.0%, coverage 100.0%; verify before use
+F	1846	1905	auto-calibrated by local alignment of a 60-nt epsilon query to genotype_F.fasta normalised to the reference frame (strand +, shift 3213); identity 96.7%, coverage 100.0%; verify before use

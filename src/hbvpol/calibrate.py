@@ -29,7 +29,9 @@ for it.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from .domain import (
@@ -39,15 +41,35 @@ from .domain import (
     reverse_complement,
     translate,
 )
+from .io import read_fasta, rotate_to_origin
 
 __all__ = [
     "AlignmentHit",
     "DomainCalibration",
+    "YMDD_CODON_VARIANTS",
     "calibrate_epsilon_span",
     "calibrate_domain_spans",
     "map_span_by_alignment",
     "detect_pol_protein",
+    "find_unique_motif",
+    "looks_like_nucleotide",
+    "orient_to_reference",
+    "pol_from_reference_features",
+    "read_reference_sequence",
+    "slice_wrapped",
 ]
+
+#: YMDD catalytic-motif codons (Y = TAT/TAC, M = ATG, D = GAT/GAC x2).  The
+#: motif is invariant at the protein level, so one of these nucleotide variants
+#: is a reliable, genotype-independent anchor between the origin and epsilon.
+YMDD_CODON_VARIANTS: tuple[str, ...] = tuple(
+    y + "ATG" + d1 + d2
+    for y in ("TAT", "TAC")
+    for d1 in ("GAT", "GAC")
+    for d2 in ("GAT", "GAC")
+)
+
+_NUCLEOTIDE_SYMBOLS = set("ACGTUNRYKMSWBDHV-.")
 
 
 # Canonical reporting order for the four domains.
@@ -219,9 +241,13 @@ def calibrate_domain_spans(
     """Transfer Pol domain boundaries from a query Pol protein to a target Pol.
 
     A global BLOSUM62 alignment is used because the boundaries are internal and
-    span the whole polypeptide.  Each query span is mapped through the alignment
-    and clamped to the target length, so a shorter target genotype cannot spill
-    past its own end.
+    span the whole polypeptide.  Boundaries are anchored on the **end** of each
+    query domain, and each target span starts one residue after the previous
+    one, so the result is a gap-free partition of the target: a genotype
+    insertion that the alignment places at a domain junction is absorbed by the
+    following domain rather than leaving an unannotated hole (which
+    ``domain_of`` would reject).  When the query's last domain reaches the end of
+    the query Pol, the target's last domain is extended to the target's own end.
     """
     query_pol = str(query_pol).upper()
     target_pol = str(target_pol).upper()
@@ -233,21 +259,38 @@ def calibrate_domain_spans(
     identity, coverage = _aln_stats(alignment, len(query_pol))
 
     warnings: list[str] = []
-    spans: list[DomainSpan] = []
-    for span in query_spans:
-        mapped = map_span_by_alignment(alignment, span.start, span.end, len(query_pol))
+    ordered = sorted(query_spans, key=lambda span: (span.start, span.end))
+    if not ordered:
+        return DomainCalibration((), identity, coverage, ("no query spans supplied",))
+
+    # Anchor on the end of every domain except the last, which is handled below.
+    anchors: list[int] = []
+    for span in ordered[:-1]:
+        mapped = map_span_by_alignment(alignment, span.end, span.end, len(query_pol))
         if mapped is None:
             warnings.append(
-                f"{span.domain.value}: could not map {span.start}-{span.end}; "
-                "keeping query coordinates"
+                f"{span.domain.value}: could not map boundary {span.end}; "
+                "using the query coordinate"
             )
-            mapped = (span.start, span.end)
-        start, end = mapped
+            anchors.append(span.end)
+        else:
+            anchors.append(mapped[1])
+
+    spans: list[DomainSpan] = []
+    previous_end = 0
+    for index, span in enumerate(ordered):
+        if index < len(ordered) - 1:
+            end = anchors[index]
+        elif span.end >= len(query_pol):
+            end = len(target_pol)
+        else:
+            mapped = map_span_by_alignment(alignment, span.end, span.end, len(query_pol))
+            end = mapped[1] if mapped is not None else span.end
+        start = previous_end + 1
         start = max(1, min(start, len(target_pol)))
-        end = max(1, min(end, len(target_pol)))
-        if start > end:
-            start, end = end, start
+        end = max(start, min(int(end), len(target_pol)))
         spans.append(DomainSpan(span.domain, start, end))
+        previous_end = end
 
     if identity < min_identity:
         warnings.append(
@@ -307,3 +350,123 @@ def detect_pol_protein(
             f"{min_identity:.0%}; the reference may be the wrong accession"
         )
     return protein, strand, frame, identity, coverage
+
+
+# --------------------------------------------------------------------------- #
+# reference-frame normalisation (orientation + rotation)
+# --------------------------------------------------------------------------- #
+def looks_like_nucleotide(sequence: str) -> bool:
+    """True when every symbol is a nucleotide/IUPAC/gap character."""
+    return set(str(sequence).upper()) <= _NUCLEOTIDE_SYMBOLS
+
+
+def slice_wrapped(sequence: str, start_nt: int, end_nt: int) -> str:
+    """Slice a 1-based inclusive interval from a circular sequence."""
+    sequence = str(sequence).upper()
+    length = len(sequence)
+    if length == 0:
+        return ""
+    start_nt = int(start_nt)
+    end_nt = int(end_nt)
+    start0 = (start_nt - 1) % length
+    if start_nt <= end_nt:
+        return sequence[start0:end_nt]
+    return sequence[start0:] + sequence[: end_nt % length]
+
+
+def read_reference_sequence(path: str | Path) -> str:
+    """Read the reference genome from a ``reference_features.json``.
+
+    The reference stage writes ``sequence``/``sequence_path`` as a *path* to a
+    FASTA, but an inlined nucleotide string is also accepted.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    reference = data.get("reference", data)
+    for candidate in (reference.get("sequence_path"), reference.get("sequence")):
+        if not candidate:
+            continue
+        candidate_path = Path(str(candidate))
+        if candidate_path.is_file():
+            records = read_fasta(candidate_path)
+            if records:
+                return records[0].seq.upper()
+        text = str(candidate)
+        if len(text) >= 100 and looks_like_nucleotide(text):
+            return text.upper()
+    raise ValueError(f"could not resolve the reference sequence from {path}")
+
+
+def pol_from_reference_features(path: str | Path) -> str:
+    """Extract the reference Pol protein from ``reference_features.json``."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    reference = data.get("reference", data)
+    sequence = read_reference_sequence(path)
+    return translate(
+        slice_wrapped(sequence, int(reference["pol_start_nt"]), int(reference["pol_end_nt"])),
+        frame=0,
+    )
+
+
+def _circular_positions(sequence: str, motif: str) -> list[int]:
+    """1-based positions of every occurrence of ``motif``, searching circularly."""
+    sequence = str(sequence).upper()
+    motif = str(motif).upper()
+    if not motif or len(motif) > len(sequence):
+        return []
+    extended = sequence + sequence[: len(motif) - 1]
+    positions: list[int] = []
+    index = extended.find(motif)
+    while index != -1 and index < len(sequence):
+        position = index + 1
+        if position not in positions:
+            positions.append(position)
+        index = extended.find(motif, index + 1)
+    return positions
+
+
+def find_unique_motif(
+    sequence: str, motifs: Iterable[str]
+) -> tuple[int, str] | None:
+    """Return ``(position, motif)`` when exactly one variant occurs once, else ``None``."""
+    hits: list[tuple[int, str]] = []
+    for motif in motifs:
+        for position in _circular_positions(sequence, motif):
+            hits.append((position, str(motif).upper()))
+    if len(hits) != 1:
+        return None
+    return hits[0]
+
+
+def orient_to_reference(
+    target: str,
+    reference: str,
+    motifs: Iterable[str] = YMDD_CODON_VARIANTS,
+) -> tuple[str, str, int] | None:
+    """Rotate (and flip) ``target`` into the reference's coordinate frame.
+
+    A conserved, unique anchor motif is located in both the reference and the
+    target; the target is then rotated (and reverse-complemented when the anchor
+    is only found on the minus strand) so that its anchor sits at the reference
+    anchor's coordinate.  This is what makes per-genotype ε and other
+    nucleotide coordinates comparable, since public records carry arbitrary
+    rotation and sometimes the opposite strand.
+
+    Returns ``(oriented_sequence, strand, shift)`` where ``strand`` is the
+    relative orientation of the input and ``shift`` is the applied 0-based left
+    rotation, or ``None`` when the anchor is absent or ambiguous in either
+    sequence.
+    """
+    reference = str(reference).upper()
+    target = str(target).upper().replace("U", "T")
+    reference_anchor = find_unique_motif(reference, motifs)
+    if reference_anchor is None:
+        return None
+    reference_position, _ = reference_anchor
+    for strand, candidate in (("+", target), ("-", reverse_complement(target))):
+        anchor = find_unique_motif(candidate, motifs)
+        if anchor is None:
+            continue
+        target_position, _ = anchor
+        shift = (target_position - reference_position) % len(candidate)
+        return rotate_to_origin(candidate, shift + 1), strand, shift
+    return None

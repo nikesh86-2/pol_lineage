@@ -3,3 +3,27 @@ default	TP	1	183	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per g
 default	spacer	184	336	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py
 default	RT	337	681	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py
 default	RNaseH	682	832	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py
+A	TP	1	185	auto-calibrated by Pol protein alignment against genotype_A.fasta (detected + frame 1, identity 86.4%); identity 86.4%, coverage 100.0%; verify against the annotation before use
+A	spacer	186	349	auto-calibrated by Pol protein alignment against genotype_A.fasta (detected + frame 1, identity 86.4%); identity 86.4%, coverage 100.0%; verify against the annotation before use
+A	RT	350	694	auto-calibrated by Pol protein alignment against genotype_A.fasta (detected + frame 1, identity 86.4%); identity 86.4%, coverage 100.0%; verify against the annotation before use
+A	RNaseH	695	845	auto-calibrated by Pol protein alignment against genotype_A.fasta (detected + frame 1, identity 86.4%); identity 86.4%, coverage 100.0%; verify against the annotation before use
+B	TP	1	183	auto-calibrated by Pol protein alignment against genotype_B.fasta (detected + frame 2, identity 87.0%); identity 87.0%, coverage 100.0%; verify against the annotation before use
+B	spacer	184	347	auto-calibrated by Pol protein alignment against genotype_B.fasta (detected + frame 2, identity 87.0%); identity 87.0%, coverage 100.0%; verify against the annotation before use
+B	RT	348	692	auto-calibrated by Pol protein alignment against genotype_B.fasta (detected + frame 2, identity 87.0%); identity 87.0%, coverage 100.0%; verify against the annotation before use
+B	RNaseH	693	843	auto-calibrated by Pol protein alignment against genotype_B.fasta (detected + frame 2, identity 87.0%); identity 87.0%, coverage 100.0%; verify against the annotation before use
+C	TP	1	183	auto-calibrated by Pol protein alignment against genotype_C.fasta (detected + frame 2, identity 87.6%); identity 87.6%, coverage 100.0%; verify against the annotation before use
+C	spacer	184	347	auto-calibrated by Pol protein alignment against genotype_C.fasta (detected + frame 2, identity 87.6%); identity 87.6%, coverage 100.0%; verify against the annotation before use
+C	RT	348	692	auto-calibrated by Pol protein alignment against genotype_C.fasta (detected + frame 2, identity 87.6%); identity 87.6%, coverage 100.0%; verify against the annotation before use
+C	RNaseH	693	843	auto-calibrated by Pol protein alignment against genotype_C.fasta (detected + frame 2, identity 87.6%); identity 87.6%, coverage 100.0%; verify against the annotation before use
+D	TP	1	183	auto-calibrated by Pol protein alignment against genotype_D.fasta (detected - frame 0, identity 100.0%); identity 100.0%, coverage 100.0%; verify against the annotation before use
+D	spacer	184	336	auto-calibrated by Pol protein alignment against genotype_D.fasta (detected - frame 0, identity 100.0%); identity 100.0%, coverage 100.0%; verify against the annotation before use
+D	RT	337	681	auto-calibrated by Pol protein alignment against genotype_D.fasta (detected - frame 0, identity 100.0%); identity 100.0%, coverage 100.0%; verify against the annotation before use
+D	RNaseH	682	832	auto-calibrated by Pol protein alignment against genotype_D.fasta (detected - frame 0, identity 100.0%); identity 100.0%, coverage 100.0%; verify against the annotation before use
+E	TP	1	183	auto-calibrated by Pol protein alignment against genotype_E.fasta (detected + frame 2, identity 89.6%); identity 89.6%, coverage 100.0%; verify against the annotation before use
+E	spacer	184	346	auto-calibrated by Pol protein alignment against genotype_E.fasta (detected + frame 2, identity 89.6%); identity 89.6%, coverage 100.0%; verify against the annotation before use
+E	RT	347	691	auto-calibrated by Pol protein alignment against genotype_E.fasta (detected + frame 2, identity 89.6%); identity 89.6%, coverage 100.0%; verify against the annotation before use
+E	RNaseH	692	842	auto-calibrated by Pol protein alignment against genotype_E.fasta (detected + frame 2, identity 89.6%); identity 89.6%, coverage 100.0%; verify against the annotation before use
+F	TP	1	183	auto-calibrated by Pol protein alignment against genotype_F.fasta (detected + frame 2, identity 84.4%); identity 84.4%, coverage 100.0%; verify against the annotation before use
+F	spacer	184	347	auto-calibrated by Pol protein alignment against genotype_F.fasta (detected + frame 2, identity 84.4%); identity 84.4%, coverage 100.0%; verify against the annotation before use
+F	RT	348	692	auto-calibrated by Pol protein alignment against genotype_F.fasta (detected + frame 2, identity 84.4%); identity 84.4%, coverage 100.0%; verify against the annotation before use
+F	RNaseH	693	843	auto-calibrated by Pol protein alignment against genotype_F.fasta (detected + frame 2, identity 84.4%); identity 84.4%, coverage 100.0%; verify against the annotation before use

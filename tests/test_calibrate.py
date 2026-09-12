@@ -16,6 +16,10 @@ from hbvpol.calibrate import (  # noqa: E402
     calibrate_domain_spans,
     calibrate_epsilon_span,
     detect_pol_protein,
+    find_unique_motif,
+    looks_like_nucleotide,
+    orient_to_reference,
+    slice_wrapped,
 )
 from hbvpol.domain import (  # noqa: E402
     DEFAULT_DOMAIN_SPANS,
@@ -23,6 +27,7 @@ from hbvpol.domain import (  # noqa: E402
     PolDomain,
     domain_spans_from_config,
     load_domain_spans,
+    reverse_complement,
 )
 
 # Amino-acid alphabet without P, so an inserted "PPP" is an unambiguous marker.
@@ -90,6 +95,27 @@ def test_calibrate_domain_spans_clamps_to_short_target():
     assert all(1 <= span.start <= span.end <= len(target) for span in result.spans)
 
 
+def test_calibrate_domain_spans_form_gap_free_partition():
+    query = _random_protein(80, seed=41)
+    target = query[:30] + "PPP" + query[30:]  # insertion at the TP/spacer junction
+    spans = (
+        DomainSpan(PolDomain.TP, 1, 30),
+        DomainSpan(PolDomain.SPACER, 31, 40),
+        DomainSpan(PolDomain.RT, 41, 70),
+        DomainSpan(PolDomain.RNASEH, 71, 80),
+    )
+    result = calibrate_domain_spans(query, target, spans)
+
+    ordered = result.spans
+    assert ordered[0].start == 1
+    assert ordered[-1].end == len(target)
+    for previous, current in zip(ordered, ordered[1:]):
+        assert current.start == previous.end + 1  # no gaps, no overlap
+    # The junction insertion is absorbed by the following domain.
+    assert (ordered[0].start, ordered[0].end) == (1, 30)
+    assert ordered[1].start == 31
+
+
 # --------------------------------------------------------------------------- #
 # nucleotide epsilon transfer
 # --------------------------------------------------------------------------- #
@@ -143,19 +169,23 @@ def _write_span_table(path: Path) -> Path:
     return path
 
 
-def test_genotype_row_wins_and_is_clamped(tmp_path):
+def test_genotype_row_used_verbatim_and_default_clamped(tmp_path):
     table = _write_span_table(tmp_path / "pol_domain_spans.tsv")
     config = {"reference": {"domain_spans_file": str(table), "pol_length_aa": 800}}
 
     spans = domain_spans_from_config(config, genotype="A")
     by_domain = {span.domain: (span.start, span.end) for span in spans}
     assert by_domain[PolDomain.RT] == (351, 700)
-    assert by_domain[PolDomain.RNASEH] == (701, 800)  # clamped to 800
+    # A calibrated genotype row is already in that genotype's coordinates and is
+    # NOT clamped to the reference's pol_length_aa.
+    assert by_domain[PolDomain.RNASEH] == (701, 845)
     assert by_domain[PolDomain.TP] == (1, 180)
 
-    # Unknown genotype falls back to the default row.
+    # Unknown genotype falls back to the default row, which IS clamped.
     fallback = domain_spans_from_config(config, genotype="Z")
-    assert {span.domain: span.start for span in fallback}[PolDomain.RT] == 337
+    by_domain = {span.domain: (span.start, span.end) for span in fallback}
+    assert by_domain[PolDomain.RT] == (337, 681)
+    assert by_domain[PolDomain.RNASEH] == (682, 800)
 
 
 def test_config_list_beats_default_row_but_not_genotype_row(tmp_path):
@@ -179,6 +209,86 @@ def test_config_list_beats_default_row_but_not_genotype_row(tmp_path):
 
 def test_load_domain_spans_missing_file_is_empty(tmp_path):
     assert load_domain_spans(tmp_path / "nope.tsv") == {}
+
+
+# --------------------------------------------------------------------------- #
+# reference-frame helpers
+# --------------------------------------------------------------------------- #
+def test_slice_wrapped_circular():
+    assert slice_wrapped("ACGTACGTAC", 3, 6) == "GTAC"
+    assert slice_wrapped("ACGTACGTAC", 8, 2) == "TACAC"  # wraps the origin
+    assert slice_wrapped("ACGT", 1, 4) == "ACGT"
+
+
+def test_looks_like_nucleotide():
+    assert looks_like_nucleotide("ACGTNacgtn")
+    assert not looks_like_nucleotide("MPLQ")
+
+
+def test_find_unique_motif_uniqueness():
+    assert find_unique_motif("TTTTACGTACGTGGGG", ("ACGTACGT",)) == (5, "ACGTACGT")
+    assert find_unique_motif("ACGTACGTACGTACGT", ("ACGTACGT",)) is None  # ambiguous
+    assert find_unique_motif("ACGTACGT", ("TTTTTTTT",)) is None  # absent
+
+
+def test_orient_to_reference_recovers_rotation_and_strand():
+    motif = "ACGTACGTAC"
+    reference = _random_nt(50, seed=1) + motif + _random_nt(140, seed=2)
+
+    rotated = reference[30:] + reference[:30]
+    result = orient_to_reference(rotated, reference, motifs=(motif,))
+    assert result is not None
+    oriented, strand, _ = result
+    assert strand == "+"
+    assert oriented == reference
+
+    # Reverse-complemented and rotated: orientation must be detected and undone.
+    flipped = reverse_complement(reference)
+    rotated_flipped = flipped[37:] + flipped[:37]
+    result2 = orient_to_reference(rotated_flipped, reference, motifs=(motif,))
+    assert result2 is not None
+    oriented2, strand2, _ = result2
+    assert strand2 == "-"
+    assert oriented2 == reference
+
+
+def test_orient_to_reference_returns_none_without_anchor():
+    assert orient_to_reference("ACGTACGT", "ACGTACGT", motifs=("TTTTTTTT",)) is None
+
+
+def test_locate_epsilon_cli_normalises_rotation_and_strand(tmp_path):
+    motif = "TATATGGATGAT"
+    reference = _random_nt(50, seed=61) + motif + _random_nt(248, seed=62)
+    ref_path = tmp_path / "reference.fasta"
+    ref_path.write_text(f">ref\n{reference}\n", encoding="utf-8")
+
+    # Rotate and reverse-complement the reference: the CLI must recover the
+    # reference-frame coordinates of the 101-160 query.
+    rotated = reverse_complement(reference[37:] + reference[:37])
+    target_path = tmp_path / "target.fasta"
+    target_path.write_text(f">tgt\n{rotated}\n", encoding="utf-8")
+    out_path = tmp_path / "epsilon_spans.tsv"
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "locate_epsilon.py"
+    completed = subprocess.run(
+        [
+            sys.executable, str(script),
+            "--reference-fasta", str(ref_path),
+            "--target-fasta", str(target_path),
+            "--genotype", "Z",
+            "--query-span", "101", "160",
+            "--out", str(out_path),
+            "--min-identity", "0.9",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    rows = out_path.read_text(encoding="utf-8").strip().splitlines()
+    assert rows[0].split("\t") == ["genotype", "start_nt", "end_nt", "source"]
+    fields = rows[1].split("\t")
+    assert fields[0] == "Z"
+    assert (fields[1], fields[2]) == ("101", "160")
 
 
 # --------------------------------------------------------------------------- #

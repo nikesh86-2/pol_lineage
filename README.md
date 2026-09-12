@@ -108,12 +108,14 @@ Any config value can be overridden on the command line with dotted keys, e.g.
 config/config.yaml        master configuration (every stage reads from here)
 environment.yml           Python analysis stack
 environment-tools.yml     optional bioconda CLI tools
-resources/                resistance catalogue, mutants, ε + Pol-domain spans, DMS map
+resources/                resistance catalogue, mutants, ε + Pol-domain spans (A–F calibrated),
+                          genotype_references/, DMS map
 src/hbvpol/
   config.py domain.py reference.py io/ pipeline.py synthetic.py cli.py
   datasets/ qc/ recombination/ phylogeny/ selection/
   structure/ epsilon/ fitness/ atlas/
-scripts/                  run_synthetic.py, profile_stages.py, locate_pol_domains.py
+scripts/                  run_synthetic.py, profile_stages.py, locate_pol_domains.py,
+                          locate_epsilon.py
 workflow/Snakefile        Snakemake orchestration
 workflow/slurm/           SLURM batch scripts + usage
 output/reference/         derived reference_features.json (merged into config)

@@ -197,11 +197,15 @@ def domain_spans_from_config(
     4. :data:`DEFAULT_DOMAIN_SPANS`.
 
     When ``reference.pol_length_aa`` is present (written by the reference stage)
-    each span's end is clamped so it never exceeds the protein.  The table is
-    produced by ``scripts/locate_pol_domains.py``; see :mod:`hbvpol.calibrate`.
+    each span's end is clamped so it never exceeds the protein.  A
+    genotype-calibrated row is *not* clamped, because it is already expressed in
+    that genotype's own Pol coordinates (e.g. genotype A's RNaseH reaches 845,
+    not the reference's 832).  The table is produced by
+    ``scripts/locate_pol_domains.py``; see :mod:`hbvpol.calibrate`.
     """
     spans: tuple[DomainSpan, ...] | None = None
     pol_length: int | None = None
+    from_genotype = False
     if config is not None:
         key = str(genotype).strip().lower() if genotype else ""
         table: dict[str, tuple[DomainSpan, ...]] = {}
@@ -210,6 +214,7 @@ def domain_spans_from_config(
             table = load_domain_spans(str(spans_file))
         if key and key in table and key != "default":
             spans = table[key]
+            from_genotype = True
         else:
             raw = get(config, "reference.domain_spans", None)
             if raw:
@@ -227,7 +232,7 @@ def domain_spans_from_config(
 
     if spans is None:
         spans = tuple(default)
-    if pol_length:
+    if pol_length and not from_genotype:
         spans = tuple(
             DomainSpan(span.domain, span.start, min(span.end, pol_length))
             for span in spans

@@ -210,10 +210,10 @@ Status after wiring the reference into the pipeline:
 1. **Domain boundaries** — resolved per genotype through
    `reference.domain_spans_file` (genotype row → explicit `reference.domain_spans`
    list → `default` row → built-in), clamped to `reference.pol_length_aa`.
-   Pol boundaries are protein-level, and genotypes differ in Pol length (mostly
-   spacer insertions), so calibrate the rows by alignment with
-   `scripts/locate_pol_domains.py` (see below) rather than by copying genotype D's
-   numbers. The shipped table carries the documented fallbacks.
+   Calibrated for genotypes A–F (Pol lengths 845/843 vs D's 832 aa); G–J still
+   fall back to the `default` row. Pol boundaries are protein-level, so the rows
+   are calibrated by alignment with `scripts/locate_pol_domains.py` (see below),
+   not by copying genotype D's numbers.
 2. **The surface-frame offset** — *resolved automatically.* The `reference`
    stage computes it as `(s_start − pol_start) mod 3` from the CDS annotation,
    so it is no longer assumed.
@@ -230,11 +230,11 @@ Status after wiring the reference into the pipeline:
    missing backend an error and `max_positions: 0` to scan every variable
    column.
 6. **ε coordinates** — resolved per genotype through `epsilon.spans_file`
-   (table row → `default` row → `genome_span` → built-in). Because genotype
-   reference genomes differ in length, calibrate rows by alignment
-   (`hbvpol.calibrate.calibrate_epsilon_span`) rather than copying one
-   genotype's offset. The shipped table carries a documented reference span; the
-   Pol–ε compatibility heuristic remains uncalibrated.
+   (table row → `default` row → `genome_span` → built-in). Calibrated for A–F,
+   which all place ε at 1846–1905 in the reference frame (genotype D reproduces
+   the default exactly); G–J fall back to `default`. Rows are calibrated by
+   alignment (`scripts/locate_epsilon.py`) after normalising each reference's
+   rotation and strand. The Pol–ε compatibility heuristic remains uncalibrated.
 7. **The DMS map** — supplied (`resources/hbv_pol_dms_2024.tsv`).
 
 ### Calibrating per-genotype spans (`hbvpol.calibrate`)
@@ -244,20 +244,26 @@ reference genomes are not interchangeable: a 6-nt indel upstream of preS1 makes
 genotype A ~3221 nt versus genotype D's 3182 nt. Both elements are
 sequence-conserved, so the reliable calibration is alignment, not arithmetic:
 locate the element by aligning a conserved query to the genotype's own reference,
-then read the coordinates off *that* sequence.
+then read the coordinates off *that* sequence.  Public records carry arbitrary
+rotation and sometimes the opposite strand, so before reading coordinates both
+scripts normalise the reference to the reference frame using an invariant anchor
+(the YMDD catalytic motif, whose codons vary synonymously).
 
 * **Pol domains** (`scripts/locate_pol_domains.py`) — align a query Pol protein
   (default: the derived reference Pol) to the genotype's Pol with a global
-  BLOSUM62 alignment and transfer the four boundaries; the target may be a Pol
-  protein or a genome (coordinates supplied, or detected by six-frame
-  translation). Emits/append rows to `resources/pol_domain_spans.tsv`.
-* **ε** (`hbvpol.calibrate.calibrate_epsilon_span`) — local nucleotide alignment
-  of a conserved ε query to a genotype genome, returning 1-based coordinates in
-  that genome's numbering.
+  BLOSUM62 alignment and transfer the four boundaries as a gap-free partition;
+  the target may be a Pol protein or a genome (coordinates supplied, or detected
+  by six-frame translation of the doubled genome, which handles origin-wrapping
+  ORFs). Emits/append rows to `resources/pol_domain_spans.tsv`.
+* **ε** (`scripts/locate_epsilon.py`) — normalise rotation/strand with
+  `hbvpol.calibrate.orient_to_reference`, then local-align the conserved ε query
+  (`calibrate_epsilon_span`) and report 1-based coordinates in the reference
+  frame. Emits/append rows to `resources/epsilon_spans.tsv`.
 
 Both report alignment identity and coverage and warn below the caller's
 threshold, so a wrong accession or orientation is visible rather than silently
-mis-calibrated.
+mis-calibrated.  Genotype references are pinned in
+`resources/genotype_references/` so the calibration is reproducible offline.
 
 > **Current limit.** The Pol domain sub-alignments are extracted with a single
 > span set (the `default`/reference row), because one concatenated sub-alignment

@@ -14,7 +14,8 @@ protein with known boundaries, align it to the genotype's own Pol protein, and
 read the boundaries off that alignment (see ``hbvpol.calibrate``).
 
 Targets may be given as a Pol protein, or as a genome (with ``--pol-start-nt`` /
-``--pol-end-nt``, or detected automatically by six-frame translation).
+``--pol-end-nt``, or detected automatically by six-frame translation, which also
+handles the common origin-wrapping Pol ORF).
 
 Fetch genotype reference genomes with Biopython Entrez, e.g.::
 
@@ -45,78 +46,20 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from hbvpol.calibrate import calibrate_domain_spans, detect_pol_protein  # noqa: E402
+from hbvpol.calibrate import (  # noqa: E402
+    calibrate_domain_spans,
+    detect_pol_protein,
+    looks_like_nucleotide,
+    pol_from_reference_features,
+    slice_wrapped,
+)
 from hbvpol.domain import DEFAULT_DOMAIN_SPANS, translate  # noqa: E402
-
-_NUCLEOTIDE_SYMBOLS = set("ACGTUNRYKMSWBDHV-.")
-
-
-def slice_wrapped(sequence: str, start_nt: int, end_nt: int) -> str:
-    """Slice a 1-based inclusive interval from a circular sequence."""
-    sequence = sequence.upper()
-    length = len(sequence)
-    start0 = (start_nt - 1) % length
-    if start_nt <= end_nt:
-        return sequence[start0:end_nt]
-    return sequence[start0:] + sequence[: end_nt % length]
-
-
-def pol_from_reference_features(path: Path) -> str:
-    """Extract the reference Pol protein from ``reference_features.json``.
-
-    The ``sequence``/``sequence_path`` fields written by the reference stage hold
-    a path to the reference FASTA (not the sequence itself), so both a path and
-    an inlined nucleotide sequence are accepted.
-    """
-    data = json.loads(path.read_text(encoding="utf-8"))
-    reference = data.get("reference", data)
-    start_nt = int(reference["pol_start_nt"])
-    end_nt = int(reference["pol_end_nt"])
-
-    sequence = ""
-    for candidate in (reference.get("sequence_path"), reference.get("sequence")):
-        if not candidate:
-            continue
-        candidate_path = Path(str(candidate))
-        if candidate_path.is_file():
-            sequence = read_first_sequence(candidate_path)
-            break
-        if set(str(candidate).upper()) <= _NUCLEOTIDE_SYMBOLS:
-            sequence = str(candidate).upper()
-            break
-    if not sequence:
-        raise SystemExit(
-            f"could not resolve the reference sequence from {path}; expected a "
-            "sequence_path/sequence file or an inlined nucleotide sequence"
-        )
-    return translate(slice_wrapped(sequence, start_nt, end_nt), frame=0)
-
-
-def read_first_sequence(path: Path) -> str:
-    """Return the first sequence from a (possibly multi-record) FASTA."""
-    lines: list[str] = []
-    seen_header = False
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.startswith(">"):
-            if seen_header:
-                break
-            seen_header = True
-            continue
-        if seen_header:
-            lines.append(line.strip())
-    if not lines:
-        raise SystemExit(f"no sequence found in {path}")
-    return "".join(lines).upper()
-
-
-def looks_like_nucleotide(sequence: str) -> bool:
-    return set(sequence.upper()) <= _NUCLEOTIDE_SYMBOLS
+from hbvpol.io import read_fasta  # noqa: E402
 
 
 def main() -> None:
@@ -140,7 +83,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.query_pol_fasta:
-        query_pol = read_first_sequence(Path(args.query_pol_fasta))
+        records = read_fasta(Path(args.query_pol_fasta))
+        if not records:
+            raise SystemExit(f"no sequence in {args.query_pol_fasta}")
+        query_pol = records[0].seq.upper()
     else:
         features_path = Path(args.reference_features)
         if not features_path.exists():
@@ -152,7 +98,10 @@ def main() -> None:
     target_path = Path(args.target_fasta)
     if not target_path.exists():
         raise SystemExit(f"target FASTA not found: {target_path}")
-    target = read_first_sequence(target_path)
+    records = read_fasta(target_path)
+    if not records:
+        raise SystemExit(f"no sequence in {target_path}")
+    target = records[0].seq.upper()
 
     is_protein = args.target_is_protein or not looks_like_nucleotide(target)
 

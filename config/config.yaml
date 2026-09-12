@@ -304,8 +304,9 @@ epsilon:
   length_nt: [55, 70]
   fold_models: [literature, rnafold, alphafold3_rna]
   # Per-genotype coordinates.  Resolution order: the table row for the record's
-  # genotype, then a `default` row, then `genome_span` below.  The shipped table
-  # carries a documented default; curate genotype rows to make it exact.
+  # genotype, then a `default` row, then `genome_span` below.  A-F are
+  # calibrated (all 1846-1905 in the reference frame) with
+  # scripts/locate_epsilon.py; G-J fall back to the default row.
   spans_file: resources/epsilon_spans.tsv
   genome_span: [1846, 1905]            # fallback, reference numbering (EcoRI origin)
   # Covariation between TP residues and epsilon base pairs.
