@@ -111,6 +111,10 @@ def run_gard(alignment, config, workdir) -> pd.DataFrame:
         executable_name, "gard",
         "--alignment", str(alignment_path),
         "--output", str(json_out),
+        # HyPhy aborts GARD on reversible-model numerical instability with an
+        # internal ComputeBranchCache error; its documented remedy is to treat
+        # those as warnings.  Without this GARD silently yields a 0-byte JSON.
+        "ENV=TOLERATE_NUMERICAL_ERRORS=1;",
     ]
     rate_variation = get(config, "recombination.gard.rate_variation")
     n_categories = get(config, "recombination.gard.n_categories")
