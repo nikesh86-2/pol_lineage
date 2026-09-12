@@ -108,12 +108,12 @@ Any config value can be overridden on the command line with dotted keys, e.g.
 config/config.yaml        master configuration (every stage reads from here)
 environment.yml           Python analysis stack
 environment-tools.yml     optional bioconda CLI tools
-resources/                resistance catalogue, mutants, ε spans, DMS map
+resources/                resistance catalogue, mutants, ε + Pol-domain spans, DMS map
 src/hbvpol/
   config.py domain.py reference.py io/ pipeline.py synthetic.py cli.py
   datasets/ qc/ recombination/ phylogeny/ selection/
   structure/ epsilon/ fitness/ atlas/
-scripts/                  run_synthetic.py, profile_stages.py
+scripts/                  run_synthetic.py, profile_stages.py, locate_pol_domains.py
 workflow/Snakefile        Snakemake orchestration
 workflow/slurm/           SLURM batch scripts + usage
 output/reference/         derived reference_features.json (merged into config)
@@ -183,9 +183,10 @@ documented simplifications you should replace for a publication run:
 
 * **Reference coordinates and the surface-frame offset** are derived by the
   `reference` stage from the annotated reference and merged into `reference`, so
-  they are no longer assumed. Per-genotype `reference.domain_spans` can make the
-  domain boundaries exact; the shipped fallbacks remain approximate and are
-  clamped to the derived Pol length.
+  they are no longer assumed. Pol domain boundaries resolve through
+  `reference.domain_spans_file` (per-genotype rows) and are clamped to the
+  derived Pol length; calibrate them by alignment with
+  `scripts/locate_pol_domains.py`. The shipped fallbacks remain approximate.
 * **Circularisation** uses reference-anchored origin detection
   (`qc.detect_origin`, on by default) and falls back to the configured origin
   when the reference seed is absent.

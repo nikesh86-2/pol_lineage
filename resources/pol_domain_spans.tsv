@@ -1,0 +1,5 @@
+genotype	domain	start	end	source
+default	TP	1	183	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py
+default	spacer	184	336	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py
+default	RT	337	681	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py
+default	RNaseH	682	832	fallback (NC_003977.2, genotype D, 832 aa Pol); calibrate per genotype with scripts/locate_pol_domains.py

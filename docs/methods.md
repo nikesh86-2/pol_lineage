@@ -207,10 +207,13 @@ in [`outputs.md`](outputs.md).
 
 Status after wiring the reference into the pipeline:
 
-1. **Domain boundaries** — the mechanism is now data-driven:
-   `reference.domain_spans` supplies genotype-specific spans and they are
-   clamped to the derived `reference.pol_length_aa`. The shipped fallbacks are
-   still approximate, so supply real per-genotype boundaries for a final run.
+1. **Domain boundaries** — resolved per genotype through
+   `reference.domain_spans_file` (genotype row → explicit `reference.domain_spans`
+   list → `default` row → built-in), clamped to `reference.pol_length_aa`.
+   Pol boundaries are protein-level, and genotypes differ in Pol length (mostly
+   spacer insertions), so calibrate the rows by alignment with
+   `scripts/locate_pol_domains.py` (see below) rather than by copying genotype D's
+   numbers. The shipped table carries the documented fallbacks.
 2. **The surface-frame offset** — *resolved automatically.* The `reference`
    stage computes it as `(s_start − pol_start) mod 3` from the CDS annotation,
    so it is no longer assumed.
@@ -226,11 +229,42 @@ Status after wiring the reference into the pipeline:
    which shells out to `plmc` (bioconda). Set `require_backend: true` to make a
    missing backend an error and `max_positions: 0` to scan every variable
    column.
-6. **ε coordinates** — now resolved per genotype through `epsilon.spans_file`
-   (table row → `default` row → `genome_span` → built-in). The shipped table
-   carries a documented reference span, so curate genotype rows to make it
-   exact. The Pol–ε compatibility heuristic remains uncalibrated.
+6. **ε coordinates** — resolved per genotype through `epsilon.spans_file`
+   (table row → `default` row → `genome_span` → built-in). Because genotype
+   reference genomes differ in length, calibrate rows by alignment
+   (`hbvpol.calibrate.calibrate_epsilon_span`) rather than copying one
+   genotype's offset. The shipped table carries a documented reference span; the
+   Pol–ε compatibility heuristic remains uncalibrated.
 7. **The DMS map** — supplied (`resources/hbv_pol_dms_2024.tsv`).
+
+### Calibrating per-genotype spans (`hbvpol.calibrate`)
+
+ε coordinates and Pol domain boundaries are single-genotype fallbacks, and
+reference genomes are not interchangeable: a 6-nt indel upstream of preS1 makes
+genotype A ~3221 nt versus genotype D's 3182 nt. Both elements are
+sequence-conserved, so the reliable calibration is alignment, not arithmetic:
+locate the element by aligning a conserved query to the genotype's own reference,
+then read the coordinates off *that* sequence.
+
+* **Pol domains** (`scripts/locate_pol_domains.py`) — align a query Pol protein
+  (default: the derived reference Pol) to the genotype's Pol with a global
+  BLOSUM62 alignment and transfer the four boundaries; the target may be a Pol
+  protein or a genome (coordinates supplied, or detected by six-frame
+  translation). Emits/append rows to `resources/pol_domain_spans.tsv`.
+* **ε** (`hbvpol.calibrate.calibrate_epsilon_span`) — local nucleotide alignment
+  of a conserved ε query to a genotype genome, returning 1-based coordinates in
+  that genome's numbering.
+
+Both report alignment identity and coverage and warn below the caller's
+threshold, so a wrong accession or orientation is visible rather than silently
+mis-calibrated.
+
+> **Current limit.** The Pol domain sub-alignments are extracted with a single
+> span set (the `default`/reference row), because one concatenated sub-alignment
+> cannot carry different per-sequence coordinates. Once calibrated genotype rows
+> exist, per-genotype extraction (split by genotype, then slice) is the natural
+> next step. `domain_spans_from_config(config, genotype=...)` already resolves
+> the right row for callers that know the genotype.
 
 ### Wiring the reference (`hbvpol.reference`)
 

@@ -28,9 +28,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Iterable, Mapping
 
 from .config import get
+from .pipeline import get_logger
+
+logger = get_logger("domain")
 
 __all__ = [
     "PolDomain",
@@ -39,6 +43,8 @@ __all__ = [
     "CANONICAL_MOTIFS",
     "domain_of",
     "domain_spans_from_config",
+    "load_domain_spans",
+    "parse_domain_spans",
     "translate",
     "reverse_complement",
     "revcomp_if_needed",
@@ -124,46 +130,108 @@ def domain_of(position: int, spans: Iterable[DomainSpan] = DEFAULT_DOMAIN_SPANS)
     raise ValueError(f"position {position} falls outside all Pol domains")
 
 
+def parse_domain_spans(entries: Iterable[object]) -> tuple[DomainSpan, ...]:
+    """Parse ``{domain, start, end}`` mappings into spans (invalid rows skipped)."""
+    parsed: list[DomainSpan] = []
+    for entry in entries:
+        try:
+            parsed.append(
+                DomainSpan(
+                    PolDomain.parse(str(entry["domain"])),  # type: ignore[index]
+                    int(entry["start"]),  # type: ignore[index]
+                    int(entry["end"]),  # type: ignore[index]
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(parsed)
+
+
+def load_domain_spans(path: str | Path) -> dict[str, tuple[DomainSpan, ...]]:
+    """Load a per-genotype Pol-domain span table.
+
+    The TSV has columns ``genotype, domain, start, end`` (an optional ``source``
+    column is ignored).  Keys are lower-cased; a ``default`` genotype applies
+    when the requested genotype is absent.  Spans are amino-acid coordinates
+    within the Pol polypeptide, matching :class:`DomainSpan`.  Returns ``{}``
+    when the file is missing or unreadable so the caller can fall back.
+    """
+    spans_path = Path(path)
+    if not spans_path.exists():
+        return {}
+    try:
+        import csv
+
+        grouped: dict[str, list[dict[str, object]]] = {}
+        with spans_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            for row in reader:
+                genotype = str(row.get("genotype", "")).strip().lower()
+                if not genotype:
+                    continue
+                grouped.setdefault(genotype, []).append(row)
+        table: dict[str, tuple[DomainSpan, ...]] = {}
+        for genotype, rows in grouped.items():
+            parsed = parse_domain_spans(rows)
+            if parsed:
+                table[genotype] = tuple(sorted(parsed, key=lambda span: span.start))
+        return table
+    except OSError as error:  # pragma: no cover - defensive
+        logger.warning("could not read Pol domain span table %s: %s", spans_path, error)
+        return {}
+
+
 def domain_spans_from_config(
     config: Mapping[str, object] | None = None,
     default: Iterable[DomainSpan] = DEFAULT_DOMAIN_SPANS,
+    genotype: str | None = None,
 ) -> tuple[DomainSpan, ...]:
-    """Resolve Pol domain spans from config, clamping to the derived Pol length.
+    """Resolve Pol domain spans, clamping to the derived Pol length.
 
-    ``reference.domain_spans`` (a list of ``{domain, start, end}``) supplies
-    genotype-specific boundaries; otherwise the fallback spans are used.  When
-    ``reference.pol_length_aa`` is present (written by the reference stage) the
-    final span is clamped so it never exceeds the protein.
+    Precedence (most specific first):
+
+    1. the row for ``genotype`` in ``reference.domain_spans_file`` (a TSV of
+       calibrated, genotype-specific boundaries);
+    2. an explicit ``reference.domain_spans`` list in the config;
+    3. the ``default`` row in that TSV;
+    4. :data:`DEFAULT_DOMAIN_SPANS`.
+
+    When ``reference.pol_length_aa`` is present (written by the reference stage)
+    each span's end is clamped so it never exceeds the protein.  The table is
+    produced by ``scripts/locate_pol_domains.py``; see :mod:`hbvpol.calibrate`.
     """
-    spans: tuple[DomainSpan, ...] = tuple(default)
+    spans: tuple[DomainSpan, ...] | None = None
+    pol_length: int | None = None
     if config is not None:
-        raw = get(config, "reference.domain_spans", None)
-        if raw:
-            parsed: list[DomainSpan] = []
-            for entry in raw:
-                try:
-                    parsed.append(
-                        DomainSpan(
-                            PolDomain.parse(str(entry["domain"])),
-                            int(entry["start"]),
-                            int(entry["end"]),
-                        )
-                    )
-                except (KeyError, TypeError, ValueError):
-                    continue
-            if parsed:
-                spans = tuple(parsed)
+        key = str(genotype).strip().lower() if genotype else ""
+        table: dict[str, tuple[DomainSpan, ...]] = {}
+        spans_file = get(config, "reference.domain_spans_file", None)
+        if spans_file:
+            table = load_domain_spans(str(spans_file))
+        if key and key in table and key != "default":
+            spans = table[key]
+        else:
+            raw = get(config, "reference.domain_spans", None)
+            if raw:
+                parsed = parse_domain_spans(raw)
+                if parsed:
+                    spans = parsed
+            if spans is None and "default" in table:
+                spans = table["default"]
 
         pol_length = get(config, "reference.pol_length_aa", None)
         try:
             pol_length = int(pol_length) if pol_length else None
         except (TypeError, ValueError):
             pol_length = None
-        if pol_length:
-            spans = tuple(
-                DomainSpan(span.domain, span.start, min(span.end, pol_length))
-                for span in spans
-            )
+
+    if spans is None:
+        spans = tuple(default)
+    if pol_length:
+        spans = tuple(
+            DomainSpan(span.domain, span.start, min(span.end, pol_length))
+            for span in spans
+        )
     return spans
 
 

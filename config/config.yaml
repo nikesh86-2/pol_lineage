@@ -129,6 +129,11 @@ reference:
   #   - {domain: spacer, start: 184, end: 336}
   #   - {domain: RT,     start: 337, end: 681}
   #   - {domain: RNaseH, start: 682, end: 832}
+  # Per-genotype calibrated boundaries (TSV: genotype, domain, start, end).  A
+  # row for the requested genotype wins over the list above; a 'default' row is
+  # used when the genotype is absent.  Calibrate with
+  # scripts/locate_pol_domains.py.  Set to null to ignore the table.
+  domain_spans_file: resources/pol_domain_spans.tsv
 
 qc:
   min_length: 2800
