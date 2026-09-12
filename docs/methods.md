@@ -147,8 +147,10 @@ recognition code; cross-genotype compatibility tests whether genotype-specific
 Pol proteins prefer their own ε and whether apparent Pol conservation masks
 compensatory evolution in RNA.
 
-> **Scaffold note.** The ε span is approximate and origin-aware; refine
-> `epsilon.genome_span` per genotype. Folding falls back to a Nussinov fold when
+> **Scaffold note.** The ε span is resolved per genotype through
+> `epsilon.spans_file` (table row → `default` row → `epsilon.genome_span` →
+> built-in); the shipped table carries a documented reference span, so curate
+> genotype rows to make it exact. Folding falls back to a Nussinov fold when
 > RNAfold is absent, and the compatibility predictor is an uncalibrated
 > contact-map-energy heuristic intended for ranking, not for quantitative
 > affinities.

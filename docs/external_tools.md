@@ -66,10 +66,31 @@ executable is found; otherwise the model manifest records where the model *would
 live and the stage continues. GPUs and model weights are your responsibility —
 they are large and are not redistributed here.
 
+## Requiring tools (publication runs)
+
+By default a missing tool is skipped and a pure-Python fallback is used, which
+is what lets the pipeline and its tests run anywhere. A publication run must not
+do that silently, so list the tools you depend on:
+
+```yaml
+project:
+  # Absence becomes a hard, up-front error instead of a fallback.
+  required_tools: [mafft, iqtree2, hyphy]
+```
+
+The same principle applies to optional backends: set
+`selection.covariation.require_backend: true` so a missing DCA implementation is
+an error rather than a silent APC-corrected-MI proxy.
+
+Note that the suite names differ between systems: IQ-TREE 2 ships `iqtree2`,
+IQ-TREE 3 ships `iqtree` (both are detected). On many clusters MAFFT, IQ-TREE,
+HyPhy and CD-HIT are present on compute nodes but not on login nodes — run the
+smoke test (below) to confirm what a job actually sees.
+
 ## Verification
 
 ```bash
-for t in mafft iqtree2 hyphy trimal cd-hit hmmsearch gmx RDP5 3seq; do
+for t in mafft iqtree2 iqtree hyphy trimal cd-hit hmmsearch gmx RDP5 3seq; do
   printf '%-12s ' "$t"; command -v "$t" || echo missing
 done
 ```

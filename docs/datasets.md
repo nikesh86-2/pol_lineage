@@ -65,25 +65,36 @@ nackednaviruses — a claim the deep alignment exists to test residue by residue
 
 HBV is circular and databases emit arbitrary rotations. All genomes are recut at
 a common origin (`reference.origin_nt`, the EcoRI site = nt 1 in standard
-convention) before any coordinate is compared. Origin detection is opt-in via
-`qc.detect_origin` and `reference.sequence`; otherwise the configured constant is
-used, which is exact for standard-numbered records and approximate otherwise.
-This is documented in `hbvpol/qc/circularise.py`.
+convention) before any coordinate is compared. Origin detection is on by default
+(`qc.detect_origin: true`) and anchored to the reference sequence written by the
+`reference` stage (`reference.sequence`); when the seed cannot be located it
+falls back to the configured constant. Detection is exact for arbitrarily
+rotated records; the fallback is exact only for standard-numbered ones. This is
+documented in `hbvpol/qc/circularise.py`.
+
+Reference-derived coordinates (see `hbvpol/reference.py` and
+[`methods.md`](methods.md)) supply the Pol/S/C spans and the surface-frame offset
+that QC, selection, epsilon and the atlas all consume.
 
 ## QC
 
 `hbvpol.qc` filters on:
 
-* `qc.min_length` (default 2800 nt),
+* `qc.min_length` (default 2800 nt) and `qc.max_length` (default 3250 nt, which
+  rejects concatemers and multi-genome constructs),
 * `qc.max_ambiguous_frac` (N/IUPAC fraction),
 * ORF integrity for the frames in `qc.require_complete_orf` (Pol, S, C by
   default) via internal-stop counting,
 * `qc.exclude_stop_in_pol`,
-* dereplication at `qc.dereplicate_identity`.
+* dereplication at `qc.dereplicate_identity` (exact-hash, plus `cd-hit-est` for
+  the approximate pass when it is installed; the pure-Python pass is bounded and
+  skipped above a same-length bucket cap).
 
 `hbv_qc_pass.tsv` records every check per genome; `hbv_qc_fail.tsv` keeps the
-rejects with machine-readable `fail_reason` codes so the filter is auditable
-rather than a silent black box.
+rejects with machine-readable `fail_reason` codes (`length`, `too_long`,
+`ambiguous`, `orf_pol`/`orf_s`/`orf_c`, `stop_in_pol`) so the filter is
+auditable rather than a silent black box. Only passing records are written to
+`hbv_oriented.fasta` and therefore flow downstream.
 
 ## Reproducibility
 

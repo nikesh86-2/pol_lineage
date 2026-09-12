@@ -25,8 +25,9 @@ sbatch --export=ALL,STAGE=select   workflow/slurm/run_pipeline.slurm
 sbatch --export=ALL,STAGE=atlas    workflow/slurm/run_pipeline.slurm
 ```
 
-`STAGE` accepts any `hbvpol` subcommand (`fetch`, `deephep`, `qc`, `recombine`,
-`tree`, `select`, `epsilon`, `fitness`, `structure`, `atlas`) or `all`.
+`STAGE` accepts any `hbvpol` subcommand (`fetch`, `deephep`, `reference`, `qc`,
+`recombine`, `tree`, `select`, `epsilon`, `fitness`, `structure`, `atlas`) or
+`all`.
 
 ## Overrides
 

@@ -19,6 +19,7 @@ overlapping surface-antigen frame.
 
 | Output | Where |
 |---|---|
+| Reference-derived coordinates + surface-frame offset | `output/reference/reference_features.json` |
 | Recombination-aware Pol phylogeny (per-block + per-domain trees) | `output/phylogeny/` |
 | Domain-specific ancestral sequences | `output/phylogeny/ancestral/` |
 | Dual-frame evolutionary analysis | `output/selection/dual_frame.tsv` |
@@ -43,6 +44,9 @@ pip install -e .
 mamba env update -n pol -f environment-tools.yml   # mafft, iqtree, hyphy, trimal, ...
 ```
 
+On a cluster where the environment lives outside the default `envs_dirs`, activate
+it by path (`conda activate /path/to/envs/pol`) — the SLURM scripts do this
+automatically; see [`workflow/slurm/README.md`](workflow/slurm/README.md).
 The Python stack runs everything offline; external tools (MAFFT, IQ-TREE, HyPhy,
 RDP5, 3SEQ, GROMACS) are optional and degrade gracefully when absent. See
 [`docs/external_tools.md`](docs/external_tools.md).
@@ -63,6 +67,7 @@ the expected output tree.
 # edit config/config.yaml — at minimum set datasets.hbv.genbank.email
 hbvpol fetch     -c config/config.yaml      # human-HBV genomes + metadata
 hbvpol deephep   -c config/config.yaml      # deep hepadnavirus / nackednavirus Pol
+hbvpol reference -c config/config.yaml      # derive coordinates from the reference
 hbvpol qc        -c config/config.yaml      # circularise + ORF integrity
 hbvpol recombine -c config/config.yaml      # RDP5 / GARD / 3SEQ / bootscan -> blocks
 hbvpol tree      -c config/config.yaml      # per-block and per-domain trees
@@ -87,6 +92,7 @@ Any config value can be overridden on the command line with dotted keys, e.g.
 | Proposal step | Package | Notes |
 |---|---|---|
 | 1. Two evolutionary datasets | `hbvpol.datasets` | NCBI GenBank is the sequence-of-record; HBVdb is an independent cross-check; HBV-GLUE supplies maintained alignments. `deephep.py` builds the hepadnavirus/nackednavirus Pol alignment. |
+| 1c. Reference coordinates | `hbvpol.reference` | Derives Pol/S/C ORF spans and the Pol↔surface frame offset from the annotated reference and merges them into `reference` for every stage. |
 | 2. Recombination before trees | `hbvpol.qc`, `hbvpol.recombination` | Circularise at the reference origin, verify ORFs, detect breakpoints with four methods, partition into non-recombinant blocks, infer per-block trees. |
 | 3. Constraints at every level | `hbvpol.selection` | Entropy, the **dual-frame codon model**, covariation/DCA, epistasis, genotype Fst, resistance annotation. |
 | 4. A structural ensemble | `hbvpol.structure` | Multiple states × lineages × predictors × seeds; pLDDT, PAE, domain orientation, catalytic geometry, hinges, MD pocket persistence. |
@@ -102,14 +108,16 @@ Any config value can be overridden on the command line with dotted keys, e.g.
 config/config.yaml        master configuration (every stage reads from here)
 environment.yml           Python analysis stack
 environment-tools.yml     optional bioconda CLI tools
-resources/                resistance catalogue, mutants, DMS schema
+resources/                resistance catalogue, mutants, ε spans, DMS map
 src/hbvpol/
-  config.py domain.py io/ pipeline.py synthetic.py cli.py
+  config.py domain.py reference.py io/ pipeline.py synthetic.py cli.py
   datasets/ qc/ recombination/ phylogeny/ selection/
   structure/ epsilon/ fitness/ atlas/
 scripts/                  run_synthetic.py, profile_stages.py
 workflow/Snakefile        Snakemake orchestration
-tests/                    121 offline tests incl. full end-to-end
+workflow/slurm/           SLURM batch scripts + usage
+output/reference/         derived reference_features.json (merged into config)
+tests/                    136 offline tests incl. full end-to-end
 docs/                     methods, datasets, external tools, output contract
 ```
 
@@ -119,16 +127,27 @@ docs/                     methods, datasets, external tools, output contract
 
 `config/config.yaml` is the single source of truth. Highlights:
 
-* `reference.*` — genotype A2 coordinates (Pol 2307→1623 wrapping the EcoRI
-  origin at nt 1), domain spans and the surface-frame offset.
-* `qc.*` — circularisation, ORF integrity, dereplication thresholds.
-* `recombination.*` — tool selection, consensus fraction, B/C hotspot handling.
+* `reference.*` — derived Pol/S/C ORF coordinates, origin, domain spans and the
+  Pol↔surface frame offset. The `reference` stage writes
+  `output/reference/reference_features.json`, which `load_config` merges into
+  this subtree (config file < derived < explicit overrides). NC_003977.2 is
+  genotype D (ayw), 3182 bp, 832 aa Pol.
+* `qc.*` — circularisation and reference-anchored origin detection, ORF
+  integrity, dereplication (cd-hit-est) thresholds.
+* `recombination.*` — tool selection, consensus fraction, B/C hotspot handling,
+  the sequence cap for breakpoint detection and the bootscan specificity guards
+  (`min_score_margin`, `min_region_len`, `min_support`).
+* `phylogeny.*` — model finder, bootstrap, rooting, ancestral method, and the
+  `max_taxa` / `max_nj_taxa` caps that keep tree inference tractable.
 * `selection.*` — domain partition, dual-frame model, covariation/epistasis
-  performance guards.
+  guards, and the DCA backend (`dca_impl`, `require_backend`).
 * `structure.*` — states, lineages, predictors, seeds, MD and hinge thresholds.
-* `epsilon.*` — ε span/folding, covarying features, compatibility predictor.
+* `epsilon.*` — per-genotype ε spans (`spans_file`), folding, covarying features,
+  compatibility predictor.
 * `fitness.*` — DMS map path and the six candidacy criteria.
 * `atlas.*` — join key, ranking weights, top-N targets.
+* `project.*` — output root, threads, seed, and `required_tools` (fail fast when
+  a tool is missing instead of silently using a pure-Python fallback).
 
 ---
 
@@ -144,7 +163,7 @@ full schema — including an atlas column dictionary — is in
 ## Testing
 
 ```bash
-pytest                 # 121 tests, fully offline
+pytest                 # 136 tests, fully offline
 pytest tests/test_end_to_end.py -q   # full stage chain on synthetic data
 ```
 
@@ -159,22 +178,31 @@ inter-stage contract and that the atlas is one row per (lineage, position).
 This repository is a working framework, not a finished analysis. Deliberate,
 documented simplifications you should replace for a publication run:
 
-* **Circularisation** assumes reference numbering unless `qc.detect_origin` is
-  enabled; enable origin detection (or provide the reference) for arbitrarily
-  rotated records.
-* **Domain boundaries** are the approximate genotype-A2 spans in
-  `DEFAULT_DOMAIN_SPANS`; refine them per genotype by lifting the reference
-  annotation onto the curated alignment.
-* **ε coordinates** (`epsilon.genome_span`) are approximate and origin-aware.
+* **Reference coordinates and the surface-frame offset** are derived by the
+  `reference` stage from the annotated reference and merged into `reference`, so
+  they are no longer assumed. Per-genotype `reference.domain_spans` can make the
+  domain boundaries exact; the shipped fallbacks remain approximate and are
+  clamped to the derived Pol length.
+* **Circularisation** uses reference-anchored origin detection
+  (`qc.detect_origin`, on by default) and falls back to the configured origin
+  when the reference seed is absent.
+* **ε coordinates** are resolved per genotype through `epsilon.spans_file`; the
+  shipped table carries a documented `default` row to curate.
 * **Offline fallbacks** (Neighbor-Joining, Fitch parsimony, Nussinov folding,
-  pure-Python bootscan, APC-corrected MI for DCA) exist so the pipeline is
-  testable with no external tools. Install the real tools for analysis; use the
-  fallbacks only for wiring tests.
+  pure-Python bootscan, APC-corrected MI) exist so the pipeline is testable with
+  no external tools. Set `project.required_tools` to make their absence a hard
+  error for a publication run.
 * **Covariation** scans only variable columns and caps them
-  (`selection.covariation.max_positions`); for tens of thousands of sequences
-  use a vectorised or external DCA backend.
-* **The DMS map is not redistributed.** Supply
-  `resources/hbv_pol_dms_2024.tsv` (see `resources/README.md`).
+  (`selection.covariation.max_positions`). A real DCA backend is wired via
+  `selection.covariation.dca_impl` + `require_backend`.
+* **Recombination** runs with a sequence cap for detection
+  (`recombination.max_seqs_for_scan`) and the offline bootscan is a *screen*
+  guarded by `min_score_margin`; install RDP5 and 3SEQ for real detection.
+* **Tree inference** subsamples to `phylogeny.max_taxa` and refuses the
+  pure-Python fallback above `phylogeny.max_nj_taxa`; install IQ-TREE (it is
+  used automatically when present).
+* **The DMS map** is supplied at `resources/hbv_pol_dms_2024.tsv` (see
+  `resources/README.md`).
 
 These are called out again, with the reasoning, in
 [`docs/methods.md`](docs/methods.md).

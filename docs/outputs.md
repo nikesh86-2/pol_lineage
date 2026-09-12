@@ -7,6 +7,7 @@ atlas can be rebuilt from whatever subset of upstream files exists.
 ```
 output/
   datasets/     hbv_genomes.fasta  hbv_metadata.tsv  deephep_pol.fasta  deephep_alignment.fasta
+  reference/    reference.fasta  reference.gb  reference_features.json
   qc/           hbv_oriented.fasta  hbv_qc_pass.tsv  hbv_qc_fail.tsv
   recombination/ breakpoints.tsv  blocks.tsv  block_alns/block_<id>.fasta
                 domain_subalns/{TP,spacer,RT,RNaseH}.fasta  recombination_summary.json
@@ -23,10 +24,17 @@ output/
                 conserved_interactions.tsv  conformational_switches.tsv  report.html  atlas_summary.json
 ```
 
+`reference/reference_features.json` is the wiring point: `load_config` merges
+its `reference` sub-object into the config (config file < derived < explicit
+overrides), so QC, selection, epsilon and the atlas all use reference-exact
+Pol/S/C spans and the surface-frame offset. `qc/hbv_oriented.fasta` contains
+**only records that passed QC**.
+
 ## Key table schemas
 
 | Table | Columns |
 |---|---|
+| `reference/reference_features.json` | `reference` (config subtree: `accession, length, origin_nt, pol_start_nt, pol_end_nt, pol_length_aa, s_start_nt, s_end_nt, c_start_nt, c_end_nt, surface_frame_offset, sequence`) and `features` (raw derived values) |
 | `qc/hbv_qc_pass.tsv` | `accession, length, ambiguous_frac, pol_start, pol_end, pol_stops, orf_pol, orf_s, orf_c, qc_pass, fail_reason` |
 | `recombination/breakpoints.tsv` | `recombinant_id, partner, tool, bp_start, bp_end, support, region` |
 | `recombination/blocks.tsv` | `block_id, start_nt, end_nt, n_seqs, n_tools_supporting` |
@@ -81,7 +89,7 @@ lineage-specific.
 | `interface_or_hinge` | Structural criterion | fitness criteria |
 | `supported_covariation` | Covariation criterion | fitness criteria |
 | `not_explained_by_surface_frame` | Not solely a surface-frame constraint | fitness criteria |
-| `distinct_from_canonical_motifs` | Outside YMDD / motifs A–F / NJG / RNase H motif C | fitness criteria |
+| `distinct_from_canonical_motifs` | Outside the configured canonical motifs (default YMDD and RT motifs A–F; RNase H motif C is also defined) | fitness criteria |
 | `n_criteria_met`, `passes_criteria` | Count and conjunction of the enabled criteria | fitness criteria |
 
 ### Other atlas outputs
