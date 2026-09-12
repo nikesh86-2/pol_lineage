@@ -199,7 +199,8 @@ documented simplifications you should replace for a publication run:
   which runs `plmc`) plus `require_backend` to forbid the MI proxy.
 * **Recombination** runs with a sequence cap for detection
   (`recombination.max_seqs_for_scan`) and the offline bootscan is a *screen*
-  guarded by `min_score_margin`; install RDP5 and 3SEQ for real detection.
+  guarded by `min_score_margin`; install **OpenRDP** (RDP4 re-implementation,
+  own env) and **3SEQ** for real detection.
 * **Tree inference** subsamples to `phylogeny.max_taxa` and refuses the
   pure-Python fallback above `phylogeny.max_nj_taxa`; install IQ-TREE (it is
   used automatically when present).

@@ -33,11 +33,52 @@ The wrapper writes an RDP5 project file and parses its CSV output
 skipped. Because RDP5 is interactive by design, `domain_wise: true` runs it once
 per Pol domain and reconciles the breakpoints.
 
+### OpenRDP (recommended RDP-family implementation)
+
+[OpenRDP](https://github.com/PoonLab/OpenRDP) is an open-source Python
+re-implementation of RDP4/RDP5 (PoonLab) with `rdp`, `geneconv`, `bootscan`,
+`maxchi`, `siscan`, `chimaera` and `threeseq` methods; it bundles the third-party
+3Seq and GENECONV binaries. It is used in place of RDP5 when installed.
+
+It is **not** on conda or PyPI, and its `setup.py` pins `numpy<2` and
+`h5py<3.11`, which conflicts with this project's NumPy 2 stack. Install it in
+its own environment:
+
+```bash
+mamba create -p /path/to/envs/openrdp -c conda-forge \
+      python=3.11 "numpy<2" scipy "h5py>=3.8,<3.11" pip
+/path/to/envs/openrdp/bin/pip install "git+https://github.com/PoonLab/OpenRDP.git"
+```
+
+```yaml
+recombination:
+  tools: [openrdp, gard, threeseq, bootscan]
+  openrdp:
+    executable: /path/to/envs/openrdp/bin/openrdp
+    methods: [rdp, threeseq]   # maxchi/siscan/chimaera abort on some inputs
+    seed: 3
+    fail: 100
+```
+
+The wrapper (`hbvpol/recombination/openrdp.py`) runs the binary and parses its
+CSV (`Method,Start,End,Recombinant,Parent1,Parent2,Pvalue`). Because it lives in
+another env, the SLURM script prepends `${OPENRDP_ENV}/bin` to `PATH`
+(`OPENRDP_ENV` defaults to `/mnt/scratch/fbsnpat/envs/openrdp`), so
+`executable: openrdp` resolves.
+
+> OpenRDP's own README warns it is still under development and not a drop-in
+> replacement for RDP5; some methods raise on some alignments. The wrapper fails
+> soft (empty frame + warning) so the stage continues.
+
 ### 3SEQ
 
-3SEQ is available from its author's site. Place the binary on `PATH` (or set the
-path in `recombination.threeseq`). Output parsing lives in
-`hbvpol/recombination/threeseq.py`.
+Bioconda ships 3SEQ: `mamba install -c bioconda 3seq`. Note its option style
+differs from RDP's 3SEQ interface — the full run is
+`3seq -full <alignment>`, options are **attached** (`-t0.05`, not `-t 0.05`),
+`-id <name>` prefixes the output files (`<name>.3s.rec.csv`), and `-f`/`-l` mean
+*first/last nucleotide* rather than input/output files. The wrapper
+(`hbvpol/recombination/threeseq.py`) handles this and parses the report's fixed
+column schema.
 
 ### GROMACS
 

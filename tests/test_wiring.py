@@ -300,3 +300,63 @@ def test_probe_group_queries_counts(monkeypatch):
     counts = probe_group_queries(config)
     assert counts == {"bat": 42, "rodent": 42}
     assert any("Bat hepatitis B virus[Organism]" in term for term in calls)
+
+
+# --------------------------------------------------------------------------- #
+# recombination tool wrappers
+# --------------------------------------------------------------------------- #
+def test_threeseq_parses_biondi_schema(tmp_path):
+    from hbvpol.recombination.partition import BREAKPOINT_COLUMNS
+    from hbvpol.recombination.threeseq import parse_breakpoints_field, parse_threeseq_output
+
+    assert parse_breakpoints_field("100-100 & 200-200") == (100, 200)
+    assert parse_breakpoints_field("44-44") == (44, 44)
+    assert parse_breakpoints_field("") == (1, 1)
+
+    path = tmp_path / "3s.rec.csv"
+    path.write_text(
+        "P_ACCNUM,Q_ACCNUM,C_ACCNUM,m,n,k,p,HS?,log(p),DS(p),DS(p),min_rec_length,breakpoints\n"
+        "B,C,R,74,76,76,0.0,0,-42.0871,0.0,1.718552e-40,99,100-100 & 200-200\n",
+        encoding="utf-8",
+    )
+    frame = parse_threeseq_output(path)
+    assert list(frame.columns) == BREAKPOINT_COLUMNS
+    row = frame.iloc[0]
+    assert row["recombinant_id"] == "R"
+    assert row["partner"] == "B|C"
+    assert (int(row["bp_start"]), int(row["bp_end"])) == (100, 200)
+    assert row["tool"] == "threeseq"
+
+
+def test_openrdp_parses_csv(tmp_path):
+    from hbvpol.recombination.openrdp import parse_openrdp_output
+    from hbvpol.recombination.partition import BREAKPOINT_COLUMNS
+
+    path = tmp_path / "openrdp.csv"
+    path.write_text(
+        "Method,Start,End,Recombinant,Parent1,Parent2,Pvalue\n"
+        "Rdp,0,80,A,B,C,4.875e-08\n"
+        "Threeseq,100,200,B,C,R,1.718e-40\n",
+        encoding="utf-8",
+    )
+    frame = parse_openrdp_output(path)
+    assert list(frame.columns) == BREAKPOINT_COLUMNS
+    assert set(frame["recombinant_id"]) == {"A", "B"}
+    assert frame.iloc[0]["partner"] == "B|C"
+    assert frame.iloc[0]["region"] == "Rdp"
+    assert frame.iloc[0]["tool"] == "openrdp"
+
+
+def test_recombination_wrappers_fail_soft(tmp_path):
+    from hbvpol.recombination.openrdp import run_openrdp
+    from hbvpol.recombination.partition import BREAKPOINT_COLUMNS
+    from hbvpol.recombination.threeseq import run_threeseq
+
+    config = {"recombination": {
+        "openrdp": {"executable": "definitely_missing_openrdp"},
+        "threeseq": {"executable": "definitely_missing_3seq"},
+    }}
+    for frame in (run_openrdp("missing.fa", config, tmp_path),
+                  run_threeseq("missing.fa", config, tmp_path)):
+        assert frame.empty
+        assert list(frame.columns) == BREAKPOINT_COLUMNS

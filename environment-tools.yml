@@ -28,6 +28,9 @@ dependencies:
   - raxml-ng>=1.2
   - hyphy>=2.5.5             # GARD + FEL/MEME/FUBAR/BUSTED
   - plmc>=2022.11            # DCA couplings (pydca/plmDCA is unmaintained)
+  - 3seq>=1.8                # triplet recombination detection
+  # OpenRDP (RDP4 re-implementation) pins numpy<2, so it lives in its own env;
+  # see docs/external_tools.md.
 
   # --- structure / MD --------------------------------------------------------
   - openmm>=8.0              # MD fallback when GROMACS is unavailable

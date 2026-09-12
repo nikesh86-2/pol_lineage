@@ -107,9 +107,9 @@ def normalise_breakpoints(frame: pd.DataFrame, tool: str) -> pd.DataFrame:
     lower = {str(column).strip().lower(): column for column in df.columns}
 
     rcol = _pick(lower, "recombinant_id", "recombinant", "recombinant sequence",
-                 "recombinant sequence(s)", "query", "sequence")
+                 "recombinant sequence(s)", "query", "sequence", "c_accnum")
     pcol = _pick(lower, "partner", "minor parent", "major parent", "parent",
-                 "reference")
+                 "reference", "parent1", "parent2", "p_accnum", "q_accnum")
     scol = _pick(lower, "bp_start", "begin", "start", "breakpoint begin",
                  "breakpoint_start", "position", "breakpoint")
     ecol = _pick(lower, "bp_end", "end", "breakpoint end", "breakpoint_end")

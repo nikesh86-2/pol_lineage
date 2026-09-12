@@ -90,6 +90,13 @@ set -u
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 export HBVPOL="${HBVPOL:-python -m hbvpol.cli}"
 
+# OpenRDP pins numpy<2 and lives in its own environment; expose its bin so
+# `recombination.openrdp.executable: openrdp` resolves without activating it.
+OPENRDP_ENV="${OPENRDP_ENV:-/mnt/scratch/fbsnpat/envs/openrdp}"
+if [ -x "${OPENRDP_ENV}/bin/openrdp" ]; then
+    export PATH="${OPENRDP_ENV}/bin:${PATH}"
+fi
+
 echo "python     : $(command -v python)"
 python -c "import hbvpol; print('hbvpol', hbvpol.__version__)"
 

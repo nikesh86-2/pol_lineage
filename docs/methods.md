@@ -43,8 +43,10 @@ with non-randomly distributed breakpoints.
 > near-identical genomes fires on ties (all pairs ~99% identical) and produced
 > thousands of spurious calls. `recombination.bootscan.min_score_margin`
 > requires the swapped partner to *beat* the primary reference by a margin, and
-> `min_region_len`/`min_support` drop short or weak regions. RDP5 and 3SEQ are
-> the real detectors and should be installed for a publication run.
+> `min_region_len`/`min_support` drop short or weak regions. The real detectors
+> are **OpenRDP** (a Python re-implementation of RDP4, used in place of the RDP5
+> binary) and **3SEQ**; both are wired as tools and should be installed for a
+> publication run.
 
 This is what makes genuine **domain-level lineage switching** visible: an RT
 region may descend from one genotype while the spacer or the overlapping surface

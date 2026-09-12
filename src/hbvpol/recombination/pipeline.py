@@ -35,6 +35,7 @@ from .partition import (
 )
 from .rdp5 import run_rdp5
 from .threeseq import run_threeseq
+from .openrdp import run_openrdp
 
 __all__ = ["run"]
 
@@ -42,6 +43,7 @@ logger = get_logger("recombination")
 
 _TOOL_RUNNERS = {
     "rdp5": run_rdp5,
+    "openrdp": run_openrdp,
     "gard": run_gard,
     "threeseq": run_threeseq,
     "bootscan": run_bootscan,

@@ -39,6 +39,7 @@ sbatch --export=ALL,STAGE=atlas    workflow/slurm/run_pipeline.slurm
 | `SNAKEMAKE_TARGET` | (empty → full DAG) | Target rule/file passed to Snakemake |
 | `HBVPOL` | `python -m hbvpol.cli` | How stages are invoked |
 | `NCBI_EMAIL` | (unset) | NCBI contact e-mail, forwarded as `datasets.hbv.genbank.email` so it is never committed |
+| `OPENRDP_ENV` | `/mnt/scratch/fbsnpat/envs/openrdp` | OpenRDP's own env; its `bin` is prepended to `PATH` so `executable: openrdp` resolves |
 | `RUN_MD` | `0` | In the GPU script, also run the MD persistence pass |
 
 Example — set the NCBI contact and launch for real:

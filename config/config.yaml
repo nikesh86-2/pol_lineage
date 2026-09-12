@@ -163,7 +163,9 @@ phylogeny:
   max_nj_taxa: 200
 
 recombination:
-  tools: [rdp5, gard, threeseq, bootscan]
+  # RDP5 is the original Windows binary; OpenRDP is its Python
+  # re-implementation and is used in its place when installed.
+  tools: [openrdp, gard, threeseq, bootscan]
   # A breakpoint is accepted when >= this fraction of independent tools agree.
   consensus_frac: 0.5
   min_block_len: 300
@@ -179,6 +181,21 @@ recombination:
     discontiguous: false
     # Detect individual domains of Pol separately, then reconcile.
     domain_wise: true
+  openrdp:
+    # Python re-implementation of RDP4 (PoonLab).  It pins numpy<2 and
+    # h5py<3.11, so install it in its own environment and point this at
+    # <envs>/openrdp/bin/openrdp; see docs/external_tools.md.
+    executable: openrdp
+    # RDP-family methods to run.  Some (maxchi/siscan/chimaera) abort on some
+    # inputs, so only the stable subset is enabled by default.
+    methods: [rdp, threeseq]
+    seed: 3
+    fail: 100
+    cfg: null                      # optional OpenRDP .ini
+  threeseq:
+    executable: 3seq               # bioconda; options are attached (-t0.05)
+    threshold: 0.05
+    id: hbvpol                     # prefixes <id>.3s.rec.csv
   bootscan:
     window: 500
     step: 50
