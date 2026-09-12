@@ -97,6 +97,8 @@ reference:
 
 qc:
   min_length: 2800
+  # Concatemers / multi-genome constructs survive a min-length filter.
+  max_length: 3250
   max_ambiguous_frac: 0.02             # N / IUPAC gaps
   require_complete_orf: [pol, s, c]    # reject frameshift/stop-riddled records
   exclude_stop_in_pol: true
@@ -105,12 +107,30 @@ qc:
   dereplicate: true
   dereplicate_identity: 0.9999
 
+phylogeny:
+  # IQ-TREE model finder and ultrafast bootstrap.
+  model_finder: MFP
+  bootstrap: 1000
+  root: null                           # outgroup name or "midpoint"
+  ancestral_method: auto               # auto | iqtree | parsimony
+  # Taxon caps.  Full-genome HBV datasets hold thousands of near-identical
+  # genomes; inferring trees on all of them is intractable, so trees use a
+  # deterministic subsample of this many taxa.
+  max_taxa: 1000
+  # Hard guard for the pure-Python Neighbor-Joining fallback: p-distances are
+  # O(N^2) and NJ is O(N^3), which never finishes on a large taxon set, so it
+  # refuses rather than hangs.
+  max_nj_taxa: 1000
+
 recombination:
   tools: [rdp5, gard, threeseq, bootscan]
   # A breakpoint is accepted when >= this fraction of independent tools agree.
   consensus_frac: 0.5
   min_block_len: 300
   min_seqs_for_scan: 4
+  # Breakpoint detection is quadratic in sequence count; run it on this many
+  # sequences (deterministic subset) rather than the whole alignment.
+  max_seqs_for_scan: 200
   gard:
     rate_variation: gamma
     n_categories: 4

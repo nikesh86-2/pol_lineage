@@ -21,7 +21,7 @@ import numpy as np
 
 from ..config import get
 from ..io import GenomeRecord, write_fasta
-from ..pipeline import effective_threads, get_logger, have_executable, run_command
+from ..pipeline import StageError, effective_threads, get_logger, have_executable, run_command
 from .align import as_pairs
 
 __all__ = [
@@ -234,10 +234,15 @@ def infer_tree(alignment, out_path, config, prefix: str = "") -> Path:
     executable = _iqtree_executable()
     if executable:
         try:
-            alignment_path = _ensure_alignment_file(alignment, out.parent / f"{stem}.fasta")
+            # Absolute paths are required: run_command sets cwd to out.parent, so
+            # a relative `-s`/`-pre` would be re-rooted under it and IQ-TREE
+            # cannot open its own log ("Could not open .../block_1.log").
+            alignment_path = Path(
+                _ensure_alignment_file(alignment, out.parent / f"{stem}.fasta")
+            ).resolve()
             bootstrap = int(get(config, "phylogeny.bootstrap", 1000) or 1000)
             threads = effective_threads(config)
-            pre = out.parent / stem
+            pre = (out.parent / stem).resolve()
             command = [
                 executable,
                 "-s", str(alignment_path),
@@ -256,6 +261,18 @@ def infer_tree(alignment, out_path, config, prefix: str = "") -> Path:
             logger.warning("IQ-TREE produced no treefile for %s; using Neighbor-Joining", stem)
         except Exception as error:
             logger.warning("IQ-TREE failed for %s (%s); using Neighbor-Joining", stem, error)
+
+    # Guard the pure-Python fallback: p-distances are O(N^2) and Neighbor-Joining
+    # is O(N^3), so a large taxon set never finishes.  Bail out loudly instead of
+    # spinning for days; callers cap taxa via `phylogeny.max_taxa`.
+    n_taxa = len(as_pairs(alignment))
+    max_nj = get(config, "phylogeny.max_nj_taxa", 1000)
+    max_nj = int(max_nj) if max_nj not in (None, "", 0) else None
+    if max_nj is not None and n_taxa > max_nj:
+        raise StageError(
+            f"refusing Neighbor-Joining on {n_taxa} taxa (phylogeny.max_nj_taxa={max_nj}); "
+            f"install IQ-TREE or lower phylogeny.max_taxa"
+        )
 
     names, matrix = p_distance_matrix(alignment)
     newick = neighbor_joining(matrix, names)

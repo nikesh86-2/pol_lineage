@@ -32,13 +32,14 @@ empty-but-correctly-schemed outputs rather than raising.
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import pandas as pd
 
 from ..config import get
 from ..domain import DEFAULT_DOMAIN_SPANS, PolDomain, translate
-from ..io import read_fasta, read_table, write_table
+from ..io import GenomeRecord, read_fasta, read_table, write_fasta, write_table
 from ..pipeline import get_logger, output_dir, stage_dir
 from .align import as_pairs, read_alignment
 from .ancestral import reconstruct_ancestral
@@ -49,6 +50,34 @@ __all__ = ["run", "ANCESTRAL_STATE_COLUMNS"]
 logger = get_logger("phylogeny")
 
 ANCESTRAL_STATE_COLUMNS = ["domain", "node", "pol_position", "aa"]
+
+
+def _cap_taxa(alignment, config: dict, workdir: Path, label: str):
+    """Deterministically subsample an alignment to ``phylogeny.max_taxa`` taxa.
+
+    Full-genome HBV datasets can hold thousands of near-identical genomes;
+    inferring trees (and especially the pure-Python fallbacks) on all of them is
+    intractable.  Subsampling is a documented scaffold approximation: a
+    production study should select representatives (e.g. one per subgenotype or
+    a CD-HIT cluster) instead.
+    """
+    max_taxa = get(config, "phylogeny.max_taxa", None)
+    max_taxa = int(max_taxa) if max_taxa not in (None, "", 0) else None
+    if not max_taxa:
+        return alignment
+    pairs = list(alignment) if isinstance(alignment, list) else as_pairs(read_alignment(alignment))
+    if len(pairs) <= max_taxa:
+        return alignment
+    rng = random.Random(int(get(config, "project.seed", 0) or 0))
+    chosen = sorted(rng.sample(range(len(pairs)), max_taxa))
+    subset = [(pairs[index][0], pairs[index][1]) for index in chosen]
+    out = workdir / f"{label}.cap{max_taxa}.fasta"
+    write_fasta([GenomeRecord(id=name, seq=seq) for name, seq in subset], out)
+    logger.warning(
+        "subsampled %s from %d to %d taxa for tree inference (phylogeny.max_taxa)",
+        label, len(pairs), max_taxa,
+    )
+    return out
 
 _FALLBACK_ALIGNMENTS = (
     ("qc", "hbv_oriented.fasta"),
@@ -168,7 +197,7 @@ def run(config: dict, root) -> dict[str, Path]:
     for label, path, _ in blocks:
         tree_path = block_trees_dir / f"{label}.treefile"
         try:
-            infer_tree(path, tree_path, config, prefix=label)
+            infer_tree(_cap_taxa(path, config, workdir, label), tree_path, config, prefix=label)
         except Exception as error:
             logger.warning("tree inference failed for %s (%s); writing placeholder", label, error)
             tree_path.write_text("();\n", encoding="utf-8")
@@ -196,7 +225,10 @@ def run(config: dict, root) -> dict[str, Path]:
 
     if genotype_alignment is not None:
         try:
-            infer_tree(genotype_alignment, genotype_tree, config, prefix="genotype")
+            infer_tree(
+                _cap_taxa(genotype_alignment, config, workdir, "genotype"),
+                genotype_tree, config, prefix="genotype",
+            )
         except Exception as error:
             logger.warning("genotype tree inference failed (%s); writing placeholder", error)
             genotype_tree.write_text("();\n", encoding="utf-8")
@@ -238,8 +270,9 @@ def run(config: dict, root) -> dict[str, Path]:
 
     for domain, alignment_path in sorted(domain_files.items(), key=lambda item: item[0].value):
         tree_path = domain_trees_dir / f"{domain.value}.treefile"
+        capped = _cap_taxa(alignment_path, config, workdir, f"domain_{domain.value}")
         try:
-            infer_tree(alignment_path, tree_path, config, prefix=domain.value)
+            infer_tree(capped, tree_path, config, prefix=domain.value)
         except Exception as error:
             logger.warning("domain tree inference failed for %s (%s)", domain.value, error)
             tree_path.write_text("();\n", encoding="utf-8")
@@ -247,7 +280,7 @@ def run(config: dict, root) -> dict[str, Path]:
 
         ancestral_path = ancestral_dir / f"ancestral_{domain.value}.fasta"
         try:
-            reconstruct_ancestral(tree_path, alignment_path, ancestral_path, config)
+            reconstruct_ancestral(tree_path, capped, ancestral_path, config)
         except Exception as error:
             logger.warning("ancestral reconstruction failed for %s (%s)", domain.value, error)
             ancestral_path.write_text("", encoding="utf-8")

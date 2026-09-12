@@ -63,22 +63,76 @@ def _locate_input(config: dict, root: Path) -> Path:
     )
 
 
+def _count_sequences(path: Path) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith(">"):
+                count += 1
+    return count
+
+
+def _subsample_alignment(alignment: Path, cap: int, config: dict, out_path: Path) -> Path:
+    """Write a deterministic subset of an alignment for breakpoint detection.
+
+    Recombination detection is quadratic in the number of sequences (RDP5/GARD
+    are heavy, and the offline bootscan is O(N^2 * L)), so it is run on a
+    representative subset.  Breakpoints are alignment columns, so they still
+    partition the full alignment.  This is a documented scaffold approximation.
+    """
+    import random
+
+    from ..io import read_fasta, write_fasta
+
+    records = read_fasta(alignment)
+    if len(records) <= cap:
+        return alignment
+    rng = random.Random(int(get(config, "project.seed", 0) or 0))
+    chosen = sorted(rng.sample(range(len(records)), cap))
+    subset = [records[index] for index in chosen]
+    write_fasta(subset, out_path)
+    return out_path
+
+
 def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
-    """Align with MAFFT when available, otherwise pass the input through."""
+    """Align with MAFFT when available, otherwise pass the input through.
+
+    ``--auto`` aborts with a usage error on very large inputs, so thousand-plus
+    sequence sets use FFT-NS-2 (``--retree 2 --maxiterate 0``), which is the
+    mode MAFFT is designed to scale to.  ``--anysymbol`` tolerates the IUPAC
+    codes present in GenBank records.  MAFFT's stderr is saved to
+    ``mafft.stderr.log`` so a failure can be diagnosed rather than guessed at.
+    """
     aligned = outdir / "hbv_aligned.fasta"
     if not have_executable("mafft"):
         logger.warning("mafft not found; using %s unaligned", input_fasta)
         return input_fasta
 
     threads = effective_threads(config)
+    n_seqs = _count_sequences(input_fasta)
+    method = ["--retree", "2", "--maxiterate", "0"] if n_seqs > 2000 else ["--auto"]
+    stderr_log = outdir / "mafft.stderr.log"
     try:
         result = run_command(
-            ["mafft", "--auto", "--thread", str(threads), str(input_fasta)],
+            ["mafft", *method, "--anysymbol", "--thread", str(threads), str(input_fasta)],
             cwd=outdir,
-            check=True,
+            stderr_path=stderr_log,
+            check=False,
         )
     except StageError as error:
-        logger.warning("mafft failed (%s); using input unaligned", error)
+        logger.warning("mafft could not run (%s); using input unaligned", error)
+        return input_fasta
+
+    if result.returncode != 0:
+        tail = ""
+        try:
+            tail = stderr_log.read_text(encoding="utf-8", errors="replace")[-800:]
+        except OSError:
+            pass
+        logger.warning(
+            "mafft failed (exit %d) on %d sequences; using input unaligned. stderr: %s",
+            result.returncode, n_seqs, tail,
+        )
         return input_fasta
 
     stdout = result.stdout or ""
@@ -86,7 +140,10 @@ def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
         logger.warning("mafft output did not look like FASTA; using input unaligned")
         return input_fasta
     aligned.write_text(stdout, encoding="utf-8")
-    logger.info("wrote alignment to %s", aligned)
+    logger.info(
+        "wrote alignment of %d sequences (mafft %s) to %s",
+        n_seqs, " ".join(method), aligned,
+    )
     return aligned
 
 
@@ -99,6 +156,22 @@ def run(config: dict, root) -> dict[str, Path]:
 
     input_fasta = _locate_input(config, root)
     alignment = _align(input_fasta, outdir, config)
+
+    # Breakpoint detection is quadratic in the number of sequences; run it on a
+    # capped subset while still partitioning the full alignment.
+    detection_alignment = alignment
+    cap = get(config, "recombination.max_seqs_for_scan", 0)
+    cap = int(cap) if cap not in (None, "", 0) else None
+    n_sequences = _count_sequences(alignment)
+    if cap is not None and n_sequences > cap:
+        detection_alignment = _subsample_alignment(
+            alignment, cap, config, outdir / "hbv_detection_subsample.fasta"
+        )
+        logger.warning(
+            "recombination detection on %d of %d sequences "
+            "(recombination.max_seqs_for_scan)",
+            cap, n_sequences,
+        )
 
     # Inject the resolved output directory so partition_alignment can write
     # block alignments without needing the project root.
@@ -116,7 +189,7 @@ def run(config: dict, root) -> dict[str, Path]:
             logger.warning("unknown recombination tool %r; skipping", tool)
             continue
         tools_run.append(tool)
-        frame = runner(alignment, run_config, workdir)
+        frame = runner(detection_alignment, run_config, workdir)
         tool_counts[tool] = int(len(frame)) if frame is not None else 0
         if frame is not None and len(frame):
             frames.append(frame)

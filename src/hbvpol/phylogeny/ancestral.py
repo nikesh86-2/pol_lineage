@@ -111,10 +111,13 @@ def _iqtree_ancestral(tree_path, alignment, config, out_path: Path) -> dict[str,
     pairs = as_pairs(alignment)
     workdir = out_path.parent
     workdir.mkdir(parents=True, exist_ok=True)
-    alignment_path = workdir / f"{out_path.stem}.fasta"
+    # Absolute paths: run_command sets cwd to workdir, so relative paths would be
+    # re-rooted under it and IQ-TREE could not open its log/state files.
+    alignment_path = (workdir / f"{out_path.stem}.fasta").resolve()
     write_fasta([GenomeRecord(id=name, seq=seq) for name, seq in pairs], alignment_path)
     threads = effective_threads(config)
-    pre = workdir / out_path.stem
+    pre = (workdir / out_path.stem).resolve()
+    tree_path = Path(tree_path).resolve()
     run_command(
         [
             executable,

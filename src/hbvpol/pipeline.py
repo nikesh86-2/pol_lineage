@@ -100,6 +100,7 @@ def run_command(
     *,
     cwd: str | Path | None = None,
     log_path: str | Path | None = None,
+    stderr_path: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess:
@@ -121,6 +122,17 @@ def run_command(
             handle.flush()
             result = subprocess.run(
                 argv, cwd=cwd, env=full_env, stdout=handle, stderr=subprocess.STDOUT, text=True
+            )
+    elif stderr_path is not None:
+        # Capture stdout (the useful output, e.g. an alignment) while teeing
+        # stderr to a file, so a tool's full diagnostic survives the error tail.
+        err_file = Path(stderr_path)
+        err_file.parent.mkdir(parents=True, exist_ok=True)
+        with err_file.open("w", encoding="utf-8") as err_handle:
+            err_handle.write(f"# cwd={cwd}\n# {' '.join(shlex.quote(a) for a in argv)}\n\n")
+            err_handle.flush()
+            result = subprocess.run(
+                argv, cwd=cwd, env=full_env, stdout=subprocess.PIPE, stderr=err_handle, text=True
             )
     else:
         result = subprocess.run(argv, cwd=cwd, env=full_env, capture_output=True, text=True)

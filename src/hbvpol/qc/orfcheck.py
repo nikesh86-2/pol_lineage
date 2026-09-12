@@ -139,6 +139,8 @@ def check_genome(record: GenomeRecord, config) -> dict:
         }
 
     min_length = int(get(config, "qc.min_length", 0) or 0)
+    max_length = get(config, "qc.max_length", None)
+    max_length = int(max_length) if max_length not in (None, "", 0) else None
     max_ambiguous = float(get(config, "qc.max_ambiguous_frac", 1.0) or 1.0)
     max_stops = int(get(config, "qc.max_internal_stops", 0) or 0)
     exclude_pol_stop = bool(get(config, "qc.exclude_stop_in_pol", True))
@@ -169,6 +171,9 @@ def check_genome(record: GenomeRecord, config) -> dict:
     reasons: list[str] = []
     if length < min_length:
         reasons.append("length")
+    if max_length is not None and length > max_length:
+        # Concatemers and multi-genome constructs survive a min-length filter.
+        reasons.append("too_long")
     if ambiguous_fraction(seq) > max_ambiguous:
         reasons.append("ambiguous")
 
