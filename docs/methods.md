@@ -38,6 +38,14 @@ with non-randomly distributed breakpoints.
 6. **Annotate Pol changes with their surface-frame consequence** so that a
    lineage switch in Pol is read alongside what it does to surface antigen.
 
+> **Offline bootscan specificity.** The pure-Python scan flags a window
+> whenever the best-matching partner changes, which on thousands of
+> near-identical genomes fires on ties (all pairs ~99% identical) and produced
+> thousands of spurious calls. `recombination.bootscan.min_score_margin`
+> requires the swapped partner to *beat* the primary reference by a margin, and
+> `min_region_len`/`min_support` drop short or weak regions. RDP5 and 3SEQ are
+> the real detectors and should be installed for a publication run.
+
 This is what makes genuine **domain-level lineage switching** visible: an RT
 region may descend from one genotype while the spacer or the overlapping surface
 region has a different origin, and only a partitioned analysis can show it.
@@ -204,10 +212,14 @@ Status after wiring the reference into the pipeline:
 4. **Offline fallbacks** — set `project.required_tools: [mafft, iqtree2, hyphy]`
    to make a missing tool a hard, up-front error instead of a silent
    pure-Python substitute.
-5. **Covariation capping** — still an approximation; use a real DCA backend
-   (`selection.covariation.dca_impl`) for a final analysis.
-6. **ε coordinates and the compatibility heuristic** — still uncalibrated;
-   refine `epsilon.genome_span` per genotype.
+5. **Covariation capping** — the quadratic scan is still capped for
+   tractability, but a real DCA backend is now wired: set
+   `selection.covariation.dca_impl` (and `require_backend: true` to make its
+   absence an error) and `max_positions: 0` to scan every variable column.
+6. **ε coordinates** — now resolved per genotype through `epsilon.spans_file`
+   (table row → `default` row → `genome_span` → built-in). The shipped table
+   carries a documented reference span, so curate genotype rows to make it
+   exact. The Pol–ε compatibility heuristic remains uncalibrated.
 7. **The DMS map** — supplied (`resources/hbv_pol_dms_2024.tsv`).
 
 ### Wiring the reference (`hbvpol.reference`)

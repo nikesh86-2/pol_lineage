@@ -19,6 +19,7 @@ frames without the ``lineage`` column, which the pipeline adds.
 
 from __future__ import annotations
 
+import importlib
 import math
 from typing import Mapping
 
@@ -27,7 +28,7 @@ import pandas as pd
 
 from ..config import get
 from ..io import GenomeRecord
-from ..pipeline import get_logger
+from ..pipeline import StageError, get_logger
 from .dualframe import alignment_width, coerce_alignment
 
 __all__ = [
@@ -174,26 +175,55 @@ def apc_correct(matrix) -> np.ndarray:
     return corrected
 
 
+def _try_external_dca(records: list[GenomeRecord], config: Mapping[str, object]) -> np.ndarray | None:
+    """Call the configured external DCA implementation, or return ``None``.
+
+    ``selection.covariation.dca_impl`` names an importable module exposing
+    ``dca_scores``.  It is tried with the record list and with a plain list of
+    sequence strings so common wrappers both work.  Any absence or shape
+    mismatch falls back to the APC-corrected MI proxy in the caller.
+    """
+    implementation = str(get(config, "selection.covariation.dca_impl", "") or "").strip()
+    if not implementation:
+        return None
+    try:
+        module = importlib.import_module(implementation)
+    except Exception:
+        logger.warning(
+            "dca_impl %r could not be imported; using APC-corrected mutual information",
+            implementation,
+        )
+        return None
+
+    candidates = [lambda: module.dca_scores(coerce_alignment(records)),
+                  lambda: module.dca_scores([record.seq for record in records])]
+    for call in candidates:
+        try:
+            matrix = np.asarray(call(), dtype=float)
+        except Exception:
+            continue
+        if matrix.ndim == 2 and matrix.shape[0] == matrix.shape[1]:
+            return matrix
+    logger.warning(
+        "dca_impl %r returned no square score matrix; using APC-corrected mutual information",
+        implementation,
+    )
+    return None
+
+
 def dca_scores(alignment, config: Mapping[str, object]) -> np.ndarray:
     """Direct-coupling-like scores for every pair of columns.
 
-    If ``selection.covariation.dca_impl`` names an importable module
-    (e.g. ``plmDCA``) that is used; otherwise — and on any failure — the
-    APC-corrected mutual-information matrix is returned as a documented
-    mean-field-like proxy so the stage never depends on an external package.
+    Uses the configured ``selection.covariation.dca_impl`` when it can be
+    imported; otherwise (and on any failure) returns the APC-corrected
+    mutual-information matrix as a documented mean-field-like proxy, so the
+    stage never depends on an external package.
     """
-    implementation = str(get(config, "selection.covariation.dca_impl", "") or "").strip()
-    if implementation:
-        try:  # pragma: no cover - external packages are absent offline
-            module = __import__(implementation)
-            if hasattr(module, "dca_scores"):
-                return np.asarray(module.dca_scores(coerce_alignment(alignment)), dtype=float)
-        except Exception:
-            logger.warning(
-                "dca_impl %r unavailable; using APC-corrected mutual information",
-                implementation,
-            )
-    return apc_correct(mutual_information(alignment))
+    records = coerce_alignment(alignment)
+    external = _try_external_dca(records, config)
+    if external is not None:
+        return external
+    return apc_correct(mutual_information(records))
 
 
 def _pvalue_from_scores(matrix: np.ndarray) -> np.ndarray:
@@ -268,7 +298,23 @@ def covarying_pairs(alignment, config: Mapping[str, object]) -> pd.DataFrame:
         if normalised in {"mutual_information", "mi"}:
             matrix, positions = base, columns
         elif normalised in {"dca", "dca_scores", "mean_field", "plmdca"}:
-            matrix, positions = apc_correct(base), columns
+            external = _try_external_dca(records, config)
+            if external is None:
+                if bool(get(config, "selection.covariation.require_backend", False)):
+                    raise StageError(
+                        "selection.covariation.require_backend is set but dca_impl "
+                        f"{get(config, 'selection.covariation.dca_impl')!r} is unavailable"
+                    )
+                matrix, positions = apc_correct(base), columns
+            elif external.shape[0] == array.shape[1]:
+                matrix, positions = external[np.ix_(columns, columns)], columns
+            else:
+                logger.warning(
+                    "external DCA matrix is %dx%d but the alignment has %d columns; "
+                    "using the APC-corrected proxy",
+                    external.shape[0], external.shape[1], array.shape[1],
+                )
+                matrix, positions = apc_correct(base), columns
         else:
             external = _score_matrix(records, str(method), config)
             if external is None or external.size == 0:

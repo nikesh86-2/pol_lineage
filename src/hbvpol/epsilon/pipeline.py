@@ -131,7 +131,7 @@ def run(config: dict, root) -> dict[str, Path]:
     epsilon_records: list[GenomeRecord] = []
     methods: Counter[str] = Counter()
     for record in genomes:
-        epsilon = extract_epsilon(record, config)
+        epsilon = extract_epsilon(record, config, genotype=_genotype_of(record, genotype_map))
         if not epsilon:
             continue
         epsilon_records.append(GenomeRecord(id=record.id, seq=epsilon, description="epsilon"))

@@ -170,6 +170,13 @@ recombination:
     step: 50
     replicates: 100
     threshold: 0.70
+    # Specificity guards for the offline scan.  On thousands of near-identical
+    # genomes the nearest neighbour flips between equally-similar references,
+    # so require the swapped partner to beat the primary by this margin, and
+    # drop short / weakly supported regions.
+    min_score_margin: 0.02
+    min_region_len: 300
+    min_support: 0.0
   # After partitioning, retain only blocks carrying a majority of the
   # recombination signal-free evidence.
   min_retained_frac: 0.6
@@ -190,6 +197,9 @@ selection:
     methods: [mutual_information, dca]
     dca_impl: plmDCA
     min_seqs: 500
+    # Fail instead of silently using the APC-corrected MI proxy when a real DCA
+    # backend is required (set true for a publication run).
+    require_backend: false
     # Pairwise metrics are O(L^2). Scan only variable columns, and cap them.
     min_entropy: 0.05          # bits; skip near-invariant columns
     max_positions: 600         # performance guard (keep the most entropic)
@@ -248,6 +258,11 @@ epsilon:
   # stem-bulge-stem with the priming bulge and an alternative cryptic fold.
   length_nt: [55, 70]
   fold_models: [literature, rnafold, alphafold3_rna]
+  # Per-genotype coordinates.  Resolution order: the table row for the record's
+  # genotype, then a `default` row, then `genome_span` below.  The shipped table
+  # carries a documented default; curate genotype rows to make it exact.
+  spans_file: resources/epsilon_spans.tsv
+  genome_span: [1846, 1905]            # fallback, reference numbering (EcoRI origin)
   # Covariation between TP residues and epsilon base pairs.
   coevolve:
     method: mutual_information

@@ -7,7 +7,8 @@ small, human-editable inputs that the manuscript supplements can point at.
 |---|---|---|
 | `hbv_pol_resistance.tsv` | `selection.drug_resistance.catalogue` | Curated RT drug-resistance substitutions mapped to Pol positions |
 | `pol_mutants.tsv` | `structure.mutants_file` | Mutants to fold as part of the structural ensemble |
-| `hbv_pol_dms_2024.tsv` | `fitness.dms.map` | The 2024 single-nucleotide-resolution Pol deep-mutational-scanning fitness map
+| `epsilon_spans.tsv` | `epsilon.spans_file` | Per-genotype ε coordinates (`genotype, start_nt, end_nt`); a `default` row applies when a genotype is absent |
+| `hbv_pol_dms_2024.tsv` | `fitness.dms.map` | The 2024 single-nucleotide-resolution Pol deep-mutational-scanning fitness map |
 
 ## Numbering conventions
 

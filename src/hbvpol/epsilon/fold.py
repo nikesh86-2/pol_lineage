@@ -30,6 +30,8 @@ from ..pipeline import get_logger, have_executable, run_command
 __all__ = [
     "DEFAULT_EPSILON_SPAN",
     "extract_epsilon",
+    "resolve_epsilon_span",
+    "load_epsilon_spans",
     "fold_epsilon",
     "nussinov_fold",
     "epsilon_features",
@@ -62,16 +64,76 @@ def _parse_span(raw) -> tuple[int, int]:
     return DEFAULT_EPSILON_SPAN
 
 
-def extract_epsilon(record: GenomeRecord | str, config: dict) -> str:
+def load_epsilon_spans(path: str | Path) -> dict[str, tuple[int, int]]:
+    """Load a ``genotype -> (start, end)`` epsilon-span table.
+
+    The table is a TSV with columns ``genotype, start_nt, end_nt`` (extra
+    columns such as ``source`` are ignored).  Keys are lower-cased; a
+    ``default`` row applies when the genotype is absent.  Returns ``{}`` when
+    the file is missing or unreadable, so the caller falls back to config.
+    """
+    spans_path = Path(path)
+    if not spans_path.exists():
+        return {}
+    try:
+        import csv
+
+        spans: dict[str, tuple[int, int]] = {}
+        with spans_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            for row in reader:
+                genotype = str(row.get("genotype", "")).strip().lower()
+                if not genotype:
+                    continue
+                try:
+                    spans[genotype] = (int(row["start_nt"]), int(row["end_nt"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        return spans
+    except OSError as error:  # pragma: no cover - defensive
+        logger.warning("could not read epsilon span table %s: %s", spans_path, error)
+        return {}
+
+
+def resolve_epsilon_span(config: dict, genotype: str | None = None) -> tuple[int, int]:
+    """Resolve the epsilon span for a genotype.
+
+    Precedence: the table row for ``genotype`` (``epsilon.spans_file``), then a
+    ``default`` row, then ``epsilon.genome_span`` (a ``[start, end]`` list or a
+    ``genotype -> [start, end]`` dict), then :data:`DEFAULT_EPSILON_SPAN`.
+    """
+    key = str(genotype).strip().lower() if genotype else ""
+    configured = get(config, "epsilon.spans_file", None)
+    if configured:
+        table = load_epsilon_spans(configured)
+        if key and key in table:
+            return table[key]
+        if "default" in table:
+            return table["default"]
+
+    raw = get(config, "epsilon.genome_span", None)
+    if isinstance(raw, dict):
+        for candidate, value in raw.items():
+            if key and str(candidate).lower() == key:
+                return _parse_span(value)
+        if "default" in raw:
+            return _parse_span(raw["default"])
+    elif raw:
+        return _parse_span(raw)
+    return DEFAULT_EPSILON_SPAN
+
+
+def extract_epsilon(record: GenomeRecord | str, config: dict, genotype: str | None = None) -> str:
     """Slice the epsilon element from an oriented genome and validate its length.
 
-    The span may wrap the origin.  Lengths outside ``epsilon.length_nt`` are
-    reported as a warning (the sequence is still returned so downstream steps can
-    proceed, but the log makes a wrong span obvious).
+    The span is resolved per genotype (see :func:`resolve_epsilon_span`); it may
+    wrap the origin.  Lengths outside ``epsilon.length_nt`` are reported as a
+    warning (the sequence is still returned so downstream steps can proceed, but
+    the log makes a wrong span obvious).
     """
     seq = record.seq if isinstance(record, GenomeRecord) else str(record)
     seq = seq.upper().replace("U", "T")
-    start, end = _parse_span(get(config, "epsilon.genome_span", DEFAULT_EPSILON_SPAN))
+    start, end = resolve_epsilon_span(config, genotype)
     length = len(seq)
     if length == 0:
         return ""

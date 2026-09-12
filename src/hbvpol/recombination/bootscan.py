@@ -68,6 +68,9 @@ def bootscan_scan(
     step: int = 50,
     threshold: float = 0.70,
     replicates: int = 100,
+    min_score_margin: float = 0.0,
+    min_region_len: int = 0,
+    min_support: float = 0.0,
 ) -> pd.DataFrame:
     """Run the pure-Python bootscan scan over an in-memory alignment.
 
@@ -75,6 +78,13 @@ def bootscan_scan(
     would govern bootstrap resampling); this deterministic implementation does
     not resample and therefore ignores it, which is recorded in the returned
     ``tool`` column as ``bootscan``.
+
+    ``min_score_margin`` requires the swapped window's best similarity to beat
+    the primary reference's similarity by at least that margin.  This is the key
+    specificity guard for HBV: with thousands of near-identical genomes the
+    nearest neighbour flips between equally-similar references, so a bare
+    ``threshold`` produces thousands of spurious calls.  ``min_region_len`` and
+    ``min_support`` then drop short or weakly supported regions.
     """
     if len(records) < 3:
         return _empty()
@@ -107,7 +117,12 @@ def bootscan_scan(
             }
             best = max(window_scores, key=window_scores.get)
             score = window_scores[best]
-            is_swap = best != primary and score >= threshold
+            primary_score = window_scores.get(primary, 0.0)
+            is_swap = (
+                best != primary
+                and score >= threshold
+                and (score - primary_score) >= min_score_margin
+            )
             if is_swap:
                 if current is not None and current["partner"] == best:
                     current["end"] = end
@@ -125,6 +140,9 @@ def bootscan_scan(
 
         for region in swapped_regions:
             support = sum(region["scores"]) / len(region["scores"])
+            region_len = region["end"] - region["start"] + 1
+            if region_len < min_region_len or support < min_support:
+                continue
             rows.append({
                 "recombinant_id": query_id,
                 "partner": region["partner"],
@@ -182,4 +200,16 @@ def run_bootscan(alignment, config, workdir) -> pd.DataFrame:
     step = int(get(config, "recombination.bootscan.step", 50) or 50)
     replicates = int(get(config, "recombination.bootscan.replicates", 100) or 100)
     threshold = float(get(config, "recombination.bootscan.threshold", 0.70) or 0.70)
-    return bootscan_scan(records, window=window, step=step, threshold=threshold, replicates=replicates)
+    min_score_margin = float(get(config, "recombination.bootscan.min_score_margin", 0.0) or 0.0)
+    min_region_len = int(get(config, "recombination.bootscan.min_region_len", 0) or 0)
+    min_support = float(get(config, "recombination.bootscan.min_support", 0.0) or 0.0)
+    return bootscan_scan(
+        records,
+        window=window,
+        step=step,
+        threshold=threshold,
+        replicates=replicates,
+        min_score_margin=min_score_margin,
+        min_region_len=min_region_len,
+        min_support=min_support,
+    )
