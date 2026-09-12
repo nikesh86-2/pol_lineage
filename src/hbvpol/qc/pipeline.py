@@ -17,7 +17,15 @@ import pandas as pd
 
 from ..config import get
 from ..io import read_fasta, write_fasta, write_table
-from ..pipeline import StageError, get_logger, output_dir, stage_dir
+from ..pipeline import (
+    StageError,
+    effective_threads,
+    get_logger,
+    have_executable,
+    output_dir,
+    run_command,
+    stage_dir,
+)
 from .circularise import orient_all
 from .deduplicate import dereplicate
 from .orfcheck import QC_COLUMNS, check_genome
@@ -25,6 +33,60 @@ from .orfcheck import QC_COLUMNS, check_genome
 __all__ = ["run"]
 
 logger = get_logger("qc")
+
+#: Above this many same-length sequences, the pure-Python approximate pass is
+#: abandoned (it is O(N^2) within a length bucket) in favour of exact dedup.
+_APPROX_BUCKET_CAP = 2000
+
+
+def _dereplicate_records(records, config, workdir: Path):
+    """Dereplicate records, preferring cd-hit-est for the approximate pass.
+
+    The pure-Python approximate dereplication compares every same-length pair
+    (O(N^2)), which is intractable for thousands of genomes.  cd-hit-est is
+    used when available; otherwise the approximate pass is skipped above
+    ``_APPROX_BUCKET_CAP`` in favour of exact-hash dedup only.
+    """
+    identity = float(get(config, "qc.dereplicate_identity", 0.9999) or 0.9999)
+    if identity >= 1.0 - 1e-9:
+        return dereplicate(records, identity=identity), "exact"
+
+    if have_executable("cd-hit-est"):
+        in_fasta = write_fasta(records, workdir / "derep_in.fasta")
+        out_fasta = workdir / "derep_out.fasta"
+        try:
+            run_command(
+                [
+                    "cd-hit-est",
+                    "-i", str(in_fasta), "-o", str(out_fasta),
+                    "-c", str(identity), "-n", "5", "-M", "0", "-d", "0",
+                    "-T", str(effective_threads(config)),
+                ],
+                cwd=workdir,
+                log_path=workdir / "cd-hit-est.log",
+                check=True,
+            )
+            representative_ids = {record.id for record in read_fasta(out_fasta)}
+            kept = [record for record in records if record.id in representative_ids]
+            if kept:
+                return kept, "cd-hit-est"
+            logger.warning("cd-hit-est produced no representatives; using exact dedup")
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning("cd-hit-est failed (%s); using exact dedup", error)
+
+    # Fallback: exact dedup, plus the approximate pass only when buckets are small.
+    lengths: dict[int, int] = {}
+    for record in records:
+        lengths[len(record.seq)] = lengths.get(len(record.seq), 0) + 1
+    largest_bucket = max(lengths.values(), default=0)
+    if largest_bucket > _APPROX_BUCKET_CAP:
+        logger.warning(
+            "skipping O(N^2) approximate dereplication: %d same-length sequences "
+            "exceed the %d cap and cd-hit-est is unavailable",
+            largest_bucket, _APPROX_BUCKET_CAP,
+        )
+        return dereplicate(records, identity=1.0), "exact"
+    return dereplicate(records, identity=identity), "approximate"
 
 
 def run(config: dict, root) -> dict[str, Path]:
@@ -65,9 +127,11 @@ def run(config: dict, root) -> dict[str, Path]:
     )
 
     if bool(get(config, "qc.dereplicate", True)) and passing_records:
-        identity = float(get(config, "qc.dereplicate_identity", 0.9999) or 0.9999)
-        kept = dereplicate(passing_records, identity=identity)
-        logger.info("dereplication kept %d of %d passing genomes", len(kept), len(passing_records))
+        kept, method = _dereplicate_records(passing_records, config, outdir)
+        logger.info(
+            "dereplication kept %d of %d passing genomes (%s)",
+            len(kept), len(passing_records), method,
+        )
     else:
         kept = passing_records
 
