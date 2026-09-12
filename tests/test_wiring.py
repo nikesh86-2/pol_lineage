@@ -360,3 +360,40 @@ def test_recombination_wrappers_fail_soft(tmp_path):
                   run_threeseq("missing.fa", config, tmp_path)):
         assert frame.empty
         assert list(frame.columns) == BREAKPOINT_COLUMNS
+
+
+# --------------------------------------------------------------------------- #
+# protein-space covariation
+# --------------------------------------------------------------------------- #
+def test_translate_pol_alignment_positions_are_residues():
+    from hbvpol.selection.dualframe import translate_pol_alignment
+
+    config = {"reference": {"pol_start_nt": 1}}
+    # Two codons: ATG GCT / ATG GCC -> Met Ala (synonymous at codon 2).
+    translated = translate_pol_alignment([("s1", "ATGGCT"), ("s2", "ATGGCC")], config)
+    assert [record.seq for record in translated] == ["MA", "MA"]
+
+    # Gaps and ambiguous codons become '-', keeping the alignment rectangular.
+    gapped = translate_pol_alignment([("s1", "ATG---"), ("s2", "ATGNNT")], config)
+    assert [record.seq for record in gapped] == ["M-", "M-"]
+    assert len({len(record.seq) for record in gapped}) == 1
+
+
+def test_covariation_on_protein_reports_residue_positions():
+    from hbvpol.selection.covariation import covarying_pairs
+
+    # Length-4 protein alignment; residues 2 and 3 vary A/C and are perfectly
+    # coupled, so the pair has MI = 1 bit.  (An A/C x A/T layout would be
+    # statistically independent and give MI = 0.)
+    protein = [("s1", "MAAA"), ("s2", "MCCA"), ("s3", "MAAA"), ("s4", "MCCA")]
+    config = {"selection": {"covariation": {
+        "methods": ["mutual_information"], "min_seqs": 0,
+        "min_entropy": 0.0, "max_positions": 50, "min_score": 0.0,
+    }}}
+    frame = covarying_pairs(protein, config)
+    assert not frame.empty
+    # Positions are Pol residues (<= protein length), not genome columns.
+    assert int(frame["position_i"].max()) <= 4
+    assert int(frame["position_j"].max()) <= 4
+    assert set(frame["position_i"]) == {2}
+    assert set(frame["position_j"]) == {3}

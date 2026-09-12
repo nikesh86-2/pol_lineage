@@ -57,6 +57,7 @@ __all__ = [
     "reference_nt_position",
     "classify_substitution",
     "dual_frame_table",
+    "translate_pol_alignment",
 ]
 
 #: The five documented outcome classes (plus ``unknown``) from hbvpol.domain.
@@ -188,6 +189,49 @@ def codon_bounds(nt_index: int, frame_start: int, width: int) -> tuple[list[int]
     start = nt_index - relative
     columns = [(start + k) % width for k in range(3)]
     return columns, relative
+
+
+def translate_pol_alignment(alignment, config: Mapping[str, object]) -> list[GenomeRecord]:
+    """Translate a nucleotide alignment into a Pol **protein** alignment.
+
+    One output character per Pol codon (see :func:`pol_codon_columns`), so
+    output position *i* corresponds to Pol amino acid *i* -- which is the
+    coordinate the atlas and the selection tables use.  Codons containing a gap
+    or an ambiguous base become ``-`` so that DCA/covariation see an aligned
+    protein alignment rather than codon-level noise.
+
+    This is the correct input for DCA, which is conventionally a protein
+    method; running it on nucleotide columns mixes reading frames and reports
+    nucleotide positions that the rest of the pipeline interprets as residues.
+    """
+    records = coerce_alignment(alignment)
+    if not records:
+        return []
+    width = alignment_width(records)
+    codon_columns = pol_codon_columns(config, width)
+    if not codon_columns:
+        return []
+
+    translated: list[GenomeRecord] = []
+    for record in records:
+        seq = record.seq.upper().ljust(width, "-")
+        chars: list[str] = []
+        for columns in codon_columns:
+            codon = "".join(seq[index] if index < len(seq) else "-" for index in columns)
+            if any(base not in _ACGT for base in codon):
+                chars.append("-")
+                continue
+            amino_acid = translate(codon, frame=0)
+            chars.append(amino_acid if amino_acid and amino_acid != "X" else "-")
+        translated.append(
+            GenomeRecord(
+                id=record.id,
+                seq="".join(chars),
+                description=record.description,
+                source=record.source,
+            )
+        )
+    return translated
 
 
 def _codon_index(start_column: int, frame_start: int, width: int) -> int:

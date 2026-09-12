@@ -95,8 +95,12 @@ arithmetic documented in the module docstring and the reference coordinates
 
 Pairwise metrics are O(L²). The covariation/epistasis scan is restricted to
 variable columns and capped (`selection.covariation.max_positions`, repeat for
-epistasis). For tens of thousands of sequences, replace the APC-corrected-MI
-proxy with a vectorised or external DCA backend (`dca_impl`).
+epistasis). By default it runs on the **translated Pol protein** alignment
+(`selection.protein_covariation: true`), so positions are Pol residues that match
+entropy, genotype specificity and the atlas; DCA is conventionally a protein
+method. Set it to `false` to scan nucleotide columns instead. For tens of
+thousands of sequences, replace the APC-corrected-MI proxy with a vectorised or
+external DCA backend (`dca_impl`).
 
 ---
 

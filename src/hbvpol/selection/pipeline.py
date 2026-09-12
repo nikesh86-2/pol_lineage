@@ -33,7 +33,7 @@ from ..config import get
 from ..io import GenomeRecord, read_fasta, read_table, write_table
 from ..pipeline import get_logger, have_executable, output_dir, run_command, stage_dir
 from .covariation import COVARIATION_COLUMNS, EPISTASIS_COLUMNS, covarying_pairs, epistasis_pairs
-from .dualframe import DUAL_FRAME_COLUMNS, coerce_alignment, dual_frame_table
+from .dualframe import DUAL_FRAME_COLUMNS, coerce_alignment, dual_frame_table, translate_pol_alignment
 from .entropy import ENTROPY_COLUMNS, per_position_entropy
 from .genotype import GENOTYPE_COLUMNS, genotype_specificity
 from .resistance import RESISTANCE_COLUMNS, resistance_table
@@ -275,11 +275,18 @@ def run(config: dict, root) -> dict[str, Path]:
         dual_frames.append(
             _with_lineage(dual_frame_table(subset, config), lineage, DUAL_FRAME_COLUMNS)
         )
+        # DCA/covariation are protein methods: run them on the translated Pol
+        # alignment so positions are Pol residues (matching entropy, genotype
+        # specificity and the atlas), not nucleotide columns.
+        if bool(get(config, "selection.protein_covariation", True)):
+            covariance_input = translate_pol_alignment(subset, config)
+        else:
+            covariance_input = subset
         covariation_frames.append(
-            _with_lineage(covarying_pairs(subset, config), lineage, COVARIATION_COLUMNS)
+            _with_lineage(covarying_pairs(covariance_input, config), lineage, COVARIATION_COLUMNS)
         )
         epistasis_frames.append(
-            _with_lineage(epistasis_pairs(subset, config), lineage, EPISTASIS_COLUMNS)
+            _with_lineage(epistasis_pairs(covariance_input, config), lineage, EPISTASIS_COLUMNS)
         )
         for method in methods:
             site_frames.append(

@@ -134,8 +134,18 @@ selection:
 The adapter writes the *selected variable columns* (not the whole genome — plmc
 estimates an O(L²) parameter set) to FASTA, runs `plmc -c couplings.txt`,
 parses the `i - j - 0 score` lines into a symmetric L×L matrix, and uses
-a `-ACGT` alphabet for nucleotide input.  `dca_impl` can point at any importable
-module exposing `dca_scores(alignment[, config])`.
+a `-ACGT` alphabet for nucleotide input.
+
+By default the pipeline feeds plmc the **translated Pol protein** alignment
+(`selection.protein_covariation: true`), so coupling positions are Pol residues
+matching entropy and the atlas.  DCA is conventionally a protein method; running
+it on nucleotide columns mixes reading frames and reports nucleotide positions
+that the rest of the pipeline reads as residues.  The adapter detects the
+alphabet from the sequences: nucleotide input gets `-a "-ACGT"`, and protein
+input (as here) is left to plmc's protein default.  Set
+`selection.protein_covariation: false` to run on nucleotide columns instead.
+`dca_impl` can point at any importable module exposing
+`dca_scores(alignment[, config])`.
 
 ## Requiring tools (publication runs)
 

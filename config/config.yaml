@@ -220,6 +220,10 @@ recombination:
 selection:
   domains: [TP, spacer, RT, RNaseH]    # Pol is partitioned into these units
   dual_frame: true                     # classify each change in Pol AND surface
+  # Run covariation/epistasis/DCA on the translated Pol protein alignment, so
+  # positions are Pol residues that match entropy and the atlas.  DCA is
+  # conventionally a protein method; false uses nucleotide alignment columns.
+  protein_covariation: true
   window: 21                           # sliding-window width (codons)
   methods: [fel, meme, fubar, busted]
   # Per-site selection runs on the recombination-free block supermatrix.

@@ -142,6 +142,8 @@ docs/                     methods, datasets, external tools, output contract
 * `selection.*` — domain partition, dual-frame model, covariation/epistasis
   guards, and the DCA backend (`dca_impl`, default `hbvpol.selection.plmc_backend`
   which runs `plmc`; `require_backend` makes a missing backend an error).
+  `protein_covariation` (default `true`) runs DCA/covariation on the translated
+  Pol protein alignment so positions are residues; `false` uses nucleotide columns.
 * `structure.*` — states, lineages, predictors, seeds, MD and hinge thresholds.
 * `epsilon.*` — per-genotype ε spans (`spans_file`), folding, covarying features,
   compatibility predictor.
@@ -193,8 +195,9 @@ documented simplifications you should replace for a publication run:
   pure-Python bootscan, APC-corrected MI) exist so the pipeline is testable with
   no external tools. Set `project.required_tools` to make their absence a hard
   error for a publication run.
-* **Covariation** scans only variable columns and caps them
-  (`selection.covariation.max_positions`). A real DCA backend is wired via
+* **Covariation** runs on the translated Pol protein alignment by default
+  (`selection.protein_covariation`) and scans only variable columns, capped via
+  `selection.covariation.max_positions`. A real DCA backend is wired via
   `selection.covariation.dca_impl` (default `hbvpol.selection.plmc_backend`,
   which runs `plmc`) plus `require_backend` to forbid the MI proxy.
 * **Recombination** runs with a sequence cap for detection

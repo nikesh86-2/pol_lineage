@@ -19,10 +19,12 @@ It writes the (already column-restricted) alignment to FASTA, runs
 ``plmc -c couplings.txt`` and parses the coupling scores -- one line per
 unordered pair, ``i - j - 0 score`` -- into a symmetric L x L matrix.
 
-Alphabet: sequences drawn from the nucleotide set use ``-a "-ACGT"`` (the
-leading ``-`` is the gap state); anything else is left to plmc's protein
-default.  For a large alignment set ``selection.covariation.plmc_fast: true`` to
-enable plmc's stochastic-gradient ``--fast`` mode.
+Alphabet: the pipeline normally passes the translated Pol **protein** alignment
+(``selection.protein_covariation: true``), which is left to plmc's protein
+default.  Sequences drawn only from the nucleotide set instead get
+``-a "-ACGT"`` (the leading ``-`` is the gap state).  For a large alignment set
+``selection.covariation.plmc_fast: true`` enables plmc's stochastic-gradient
+``--fast`` mode.
 """
 
 from __future__ import annotations
