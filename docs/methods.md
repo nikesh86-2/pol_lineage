@@ -215,9 +215,11 @@ Status after wiring the reference into the pipeline:
    to make a missing tool a hard, up-front error instead of a silent
    pure-Python substitute.
 5. **Covariation capping** — the quadratic scan is still capped for
-   tractability, but a real DCA backend is now wired: set
-   `selection.covariation.dca_impl` (and `require_backend: true` to make its
-   absence an error) and `max_positions: 0` to scan every variable column.
+   tractability, but a real DCA backend is now wired. `pydca`/`plmDCA` is
+   unmaintained, so the shipped backend is `hbvpol.selection.plmc_backend`,
+   which shells out to `plmc` (bioconda). Set `require_backend: true` to make a
+   missing backend an error and `max_positions: 0` to scan every variable
+   column.
 6. **ε coordinates** — now resolved per genotype through `epsilon.spans_file`
    (table row → `default` row → `genome_span` → built-in). The shipped table
    carries a documented reference span, so curate genotype rows to make it

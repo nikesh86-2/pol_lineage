@@ -236,7 +236,10 @@ def test_phylogeny_pipeline_run_writes_contract_artefacts(tmp_path):
     assert not states.empty
 
     summary = json.loads(artefacts["summary"].read_text())
-    assert summary["tool"] == "neighbor_joining"
+    # The tree tool is IQ-TREE when it is installed, Neighbor-Joining otherwise;
+    # assert against reality rather than a hardcoded fallback assumption.
+    from hbvpol.phylogeny.trees import _iqtree_executable
+    assert summary["tool"] == (_iqtree_executable() or "neighbor_joining")
     assert summary["n_blocks"] == 2
     assert summary["genotype_source"] == "concatenated_blocks"
     assert summary["genotype_summary"]["n_leaves"] == 5

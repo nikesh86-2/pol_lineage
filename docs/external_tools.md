@@ -66,6 +66,36 @@ executable is found; otherwise the model manifest records where the model *would
 live and the stage continues. GPUs and model weights are your responsibility —
 they are large and are not redistributed here.
 
+## DCA backend (plmc)
+
+`pydca`/`plmDCA` — the module the covariation stage originally imported — is
+unmaintained.  **`plmc`** is the maintained C++ implementation of plmDCA and is
+packaged on bioconda (already listed in `environment-tools.yml`):
+
+```bash
+mamba install -p /path/to/envs/pol -c bioconda plmc
+```
+
+`plmc` is a binary, not an importable module, so it cannot satisfy
+`selection.covariation.dca_impl` on its own.  The pipeline ships a thin adapter,
+`hbvpol.selection.plmc_backend`, which is the default backend:
+
+```yaml
+selection:
+  covariation:
+    methods: [mutual_information, dca]
+    dca_impl: hbvpol.selection.plmc_backend   # '' disables DCA
+    plmc_executable: plmc
+    plmc_fast: false        # plmc --fast (stochastic gradient) for large sets
+    require_backend: true   # error instead of silently using the MI proxy
+```
+
+The adapter writes the *selected variable columns* (not the whole genome — plmc
+estimates an O(L²) parameter set) to FASTA, runs `plmc -c couplings.txt`,
+parses the `i - j - 0 score` lines into a symmetric L×L matrix, and uses
+a `-ACGT` alphabet for nucleotide input.  `dca_impl` can point at any importable
+module exposing `dca_scores(alignment[, config])`.
+
 ## Requiring tools (publication runs)
 
 By default a missing tool is skipped and a pure-Python fallback is used, which

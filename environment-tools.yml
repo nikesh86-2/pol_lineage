@@ -3,6 +3,9 @@
 # -----------------------------------------------------------------------------
 #   mamba env update -n pol -f environment-tools.yml
 #
+# On a cluster where the env is not found by name, target it by path:
+#   mamba install -p /path/to/envs/pol -c bioconda plmc
+#
 # These are the CLI programs the workflow shells out to.  They are separated
 # from environment.yml so the Python stack can be solved and updated quickly.
 # =============================================================================
@@ -24,6 +27,7 @@ dependencies:
   - iqtree>=2.2              # ModelFinder, ML trees, ancestral reconstruction
   - raxml-ng>=1.2
   - hyphy>=2.5.5             # GARD + FEL/MEME/FUBAR/BUSTED
+  - plmc>=2022.11            # DCA couplings (pydca/plmDCA is unmaintained)
 
   # --- structure / MD --------------------------------------------------------
   - openmm>=8.0              # MD fallback when GROMACS is unavailable

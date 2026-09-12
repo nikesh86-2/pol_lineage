@@ -337,7 +337,10 @@ def test_selection_pipeline_run_writes_contract_artefacts(tmp_path):
 
     summary = json.loads(artefacts["summary"].read_text())
     assert summary["lineages"] == ["A", "B"]
-    assert summary["hyphy_available"] is False
+    # Availability is environment-dependent; assert it matches reality rather
+    # than a hardcoded assumption that HyPhy is absent.
+    from hbvpol.pipeline import have_executable
+    assert summary["hyphy_available"] == have_executable("hyphy")
 
 
 def test_selection_pipeline_degrades_without_upstream(tmp_path):

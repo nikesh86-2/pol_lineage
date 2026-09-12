@@ -179,9 +179,11 @@ def _try_external_dca(records: list[GenomeRecord], config: Mapping[str, object])
     """Call the configured external DCA implementation, or return ``None``.
 
     ``selection.covariation.dca_impl`` names an importable module exposing
-    ``dca_scores``.  It is tried with the record list and with a plain list of
-    sequence strings so common wrappers both work.  Any absence or shape
-    mismatch falls back to the APC-corrected MI proxy in the caller.
+    ``dca_scores``.  It is tried with and without ``config`` and with either the
+    record list or a plain list of sequence strings, so both simple wrappers and
+    the shipped ``hbvpol.selection.plmc_backend`` adapter work.  Any absence,
+    exception or shape mismatch falls back to the APC-corrected MI proxy in the
+    caller.
     """
     implementation = str(get(config, "selection.covariation.dca_impl", "") or "").strip()
     if not implementation:
@@ -195,8 +197,14 @@ def _try_external_dca(records: list[GenomeRecord], config: Mapping[str, object])
         )
         return None
 
-    candidates = [lambda: module.dca_scores(coerce_alignment(records)),
-                  lambda: module.dca_scores([record.seq for record in records])]
+    imported = coerce_alignment(records)
+    sequences = [record.seq for record in records]
+    candidates = [
+        lambda: module.dca_scores(imported, config),
+        lambda: module.dca_scores(imported),
+        lambda: module.dca_scores(sequences, config),
+        lambda: module.dca_scores(sequences),
+    ]
     for call in candidates:
         try:
             matrix = np.asarray(call(), dtype=float)
@@ -254,6 +262,25 @@ def _score_matrix(alignment, method: str, config: Mapping[str, object]) -> np.nd
     return None
 
 
+def _subset_records(records: list[GenomeRecord], columns: list[int]) -> list[GenomeRecord]:
+    """Return records restricted to ``columns`` (padding short sequences).
+
+    External DCA engines estimate an O(L^2) parameter set, so they must be run
+    on the selected variable columns rather than the whole genome; computing a
+    full-width matrix and indexing it afterwards is intractable.
+    """
+    subset: list[GenomeRecord] = []
+    for record in records:
+        seq = record.seq
+        subset.append(
+            GenomeRecord(
+                id=record.id,
+                seq="".join(seq[index] if index < len(seq) else "-" for index in columns),
+            )
+        )
+    return subset
+
+
 def covarying_pairs(alignment, config: Mapping[str, object]) -> pd.DataFrame:
     """Covarying column pairs for each configured method.
 
@@ -298,7 +325,8 @@ def covarying_pairs(alignment, config: Mapping[str, object]) -> pd.DataFrame:
         if normalised in {"mutual_information", "mi"}:
             matrix, positions = base, columns
         elif normalised in {"dca", "dca_scores", "mean_field", "plmdca"}:
-            external = _try_external_dca(records, config)
+            # Run the backend on the selected columns only (O(L^2) parameters).
+            external = _try_external_dca(_subset_records(records, columns), config)
             if external is None:
                 if bool(get(config, "selection.covariation.require_backend", False)):
                     raise StageError(
@@ -306,13 +334,13 @@ def covarying_pairs(alignment, config: Mapping[str, object]) -> pd.DataFrame:
                         f"{get(config, 'selection.covariation.dca_impl')!r} is unavailable"
                     )
                 matrix, positions = apc_correct(base), columns
-            elif external.shape[0] == array.shape[1]:
-                matrix, positions = external[np.ix_(columns, columns)], columns
+            elif external.shape[0] == len(columns):
+                matrix, positions = external, columns
             else:
                 logger.warning(
-                    "external DCA matrix is %dx%d but the alignment has %d columns; "
+                    "external DCA matrix is %dx%d but %d columns were selected; "
                     "using the APC-corrected proxy",
-                    external.shape[0], external.shape[1], array.shape[1],
+                    external.shape[0], external.shape[1], len(columns),
                 )
                 matrix, positions = apc_correct(base), columns
         else:

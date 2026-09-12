@@ -140,7 +140,8 @@ docs/                     methods, datasets, external tools, output contract
 * `phylogeny.*` — model finder, bootstrap, rooting, ancestral method, and the
   `max_taxa` / `max_nj_taxa` caps that keep tree inference tractable.
 * `selection.*` — domain partition, dual-frame model, covariation/epistasis
-  guards, and the DCA backend (`dca_impl`, `require_backend`).
+  guards, and the DCA backend (`dca_impl`, default `hbvpol.selection.plmc_backend`
+  which runs `plmc`; `require_backend` makes a missing backend an error).
 * `structure.*` — states, lineages, predictors, seeds, MD and hinge thresholds.
 * `epsilon.*` — per-genotype ε spans (`spans_file`), folding, covarying features,
   compatibility predictor.
@@ -194,7 +195,8 @@ documented simplifications you should replace for a publication run:
   error for a publication run.
 * **Covariation** scans only variable columns and caps them
   (`selection.covariation.max_positions`). A real DCA backend is wired via
-  `selection.covariation.dca_impl` + `require_backend`.
+  `selection.covariation.dca_impl` (default `hbvpol.selection.plmc_backend`,
+  which runs `plmc`) plus `require_backend` to forbid the MI proxy.
 * **Recombination** runs with a sequence cap for detection
   (`recombination.max_seqs_for_scan`) and the offline bootscan is a *screen*
   guarded by `min_score_margin`; install RDP5 and 3SEQ for real detection.

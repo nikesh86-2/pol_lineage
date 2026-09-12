@@ -93,14 +93,16 @@ def test_covarying_pairs_uses_external_dca(monkeypatch):
     from hbvpol.selection.covariation import covarying_pairs
 
     module = types.ModuleType("fake_dca_wiring")
-    calls = {"count": 0}
+    calls = {"count": 0, "width": None}
 
-    def dca_scores(alignment):
+    def dca_scores(alignment, config=None):
         calls["count"] += 1
         width = len(alignment[0].seq) if hasattr(alignment[0], "seq") else len(alignment[0])
+        calls["width"] = width
         matrix = np.zeros((width, width))
-        # Physical columns 1 and 2 are variable; give that pair a strong score.
-        matrix[1, 2] = matrix[2, 1] = 5.0
+        # The backend receives only the selected variable columns, so the strong
+        # score belongs at (0, 1) of the sub-alignment == original columns 2, 3.
+        matrix[0, 1] = matrix[1, 0] = 5.0
         return matrix
 
     module.dca_scores = dca_scores
@@ -108,6 +110,7 @@ def test_covarying_pairs_uses_external_dca(monkeypatch):
 
     frame = covarying_pairs(_variable_alignment(), _dca_config())
     assert calls["count"] >= 1, "external DCA backend was not called"
+    assert calls["width"] == 2, "backend should receive only the selected columns"
     hit = frame[(frame["position_i"] == 2) & (frame["position_j"] == 3)]
     assert not hit.empty
     assert float(hit.iloc[0]["score"]) == pytest.approx(5.0)
@@ -127,6 +130,56 @@ def test_dca_falls_back_without_backend():
     config = _dca_config(dca_impl="definitely_not_a_real_module_xyz", require_backend=False)
     frame = covarying_pairs(_variable_alignment(), config)  # APC proxy, no raise
     assert list(frame.columns) == ["position_i", "position_j", "method", "score", "pvalue"]
+
+
+# --------------------------------------------------------------------------- #
+# plmc backend
+# --------------------------------------------------------------------------- #
+def test_plmc_parse_couplings(tmp_path):
+    from hbvpol.selection.plmc_backend import parse_couplings
+
+    path = tmp_path / "couplings.txt"
+    path.write_text(
+        "1 - 2 - 0 0.5\n1 - 3 - 0 -0.25\n2 - 3 - 0 0.75\n# trailing junk\n",
+        encoding="utf-8",
+    )
+    pairs = parse_couplings(path)
+    assert pairs[(0, 1)] == pytest.approx(0.5)
+    assert pairs[(0, 2)] == pytest.approx(-0.25)
+    assert pairs[(1, 2)] == pytest.approx(0.75)
+
+
+def test_plmc_requires_executable():
+    from hbvpol.pipeline import StageError
+    from hbvpol.selection.plmc_backend import dca_scores
+
+    config = {"selection": {"covariation": {"plmc_executable": "definitely_missing_plmc"}}}
+    with pytest.raises(StageError):
+        dca_scores([("s1", "ACGT"), ("s2", "ACGA")], config)
+
+
+def test_plmc_runs_and_returns_symmetric_matrix():
+    import random
+    import shutil
+
+    if shutil.which("plmc") is None:
+        pytest.skip("plmc is not installed")
+    from hbvpol.selection.plmc_backend import dca_scores
+
+    rng = random.Random(1)
+    base = "".join(rng.choice("ACGT") for _ in range(14))
+    records = []
+    for index in range(40):
+        seq = list(base)
+        for _ in range(5):
+            seq[rng.randrange(len(seq))] = rng.choice("ACGT")
+        records.append((f"s{index}", "".join(seq)))
+
+    config = {"selection": {"covariation": {"plmc_executable": "plmc"}}}
+    matrix = dca_scores(records, config)
+    assert matrix.shape == (14, 14)
+    assert np.allclose(matrix, matrix.T)
+    assert np.count_nonzero(matrix) > 0
 
 
 # --------------------------------------------------------------------------- #

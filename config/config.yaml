@@ -209,7 +209,12 @@ selection:
   per_block: true
   covariation:
     methods: [mutual_information, dca]
-    dca_impl: plmDCA
+    # pydca/plmDCA is unmaintained.  The shipped adapter shells out to plmc
+    # (mamba install -c bioconda plmc); dca_impl may be any importable module
+    # exposing dca_scores(alignment[, config]).  Set to '' to skip DCA.
+    dca_impl: hbvpol.selection.plmc_backend
+    plmc_executable: plmc
+    plmc_fast: false            # plmc --fast (stochastic gradient) for large sets
     min_seqs: 500
     # Fail instead of silently using the APC-corrected MI proxy when a real DCA
     # backend is required (set true for a publication run).
