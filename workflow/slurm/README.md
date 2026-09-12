@@ -40,6 +40,7 @@ sbatch --export=ALL,STAGE=atlas    workflow/slurm/run_pipeline.slurm
 | `HBVPOL` | `python -m hbvpol.cli` | How stages are invoked |
 | `NCBI_EMAIL` | (unset) | NCBI contact e-mail, forwarded as `datasets.hbv.genbank.email` so it is never committed |
 | `OPENRDP_ENV` | `/mnt/scratch/fbsnpat/envs/openrdp` | OpenRDP's own env; its `bin` is prepended to `PATH` so `executable: openrdp` resolves |
+| `SNAKEMAKE_RERUN_TRIGGERS` | (unset → provenance) | Trigger type passed to Snakemake's `--rerun-triggers`; set to `mtime` to reuse existing outputs (e.g. skip re-fetching `output/datasets`) on a resubmission |
 | `RUN_MD` | `0` | In the GPU script, also run the MD persistence pass |
 
 Example — set the NCBI contact and launch for real:
@@ -54,6 +55,18 @@ Example — full run with an alternate config and a larger ensemble:
 sbatch --export=ALL,CONFIG=config/config.gtA-H.yaml,SNAKEMAKE_TARGET=atlas \
        workflow/slurm/run_pipeline.slurm
 ```
+
+Example — resubmit after code changes, keeping the already-fetched genomes:
+
+```bash
+sbatch --export=ALL,NCBI_EMAIL=you@example.org,SNAKEMAKE_RERUN_TRIGGERS=mtime \
+       workflow/slurm/run_pipeline.slurm
+```
+
+By default Snakemake uses provenance (rule code + config hash) to decide what to
+re-run, so editing the Snakefile or config re-triggers every stage, including the
+network fetch. `SNAKEMAKE_RERUN_TRIGGERS=mtime` falls back to modification times,
+which is what you want when the upstream outputs on disk are still valid.
 
 ## Why the environment setup looks unusual
 

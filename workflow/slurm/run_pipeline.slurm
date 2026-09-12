@@ -146,9 +146,14 @@ if [ "${STAGE}" = "all" ]; then
     # Clear any stale lock left by a killed/preempted run.  Safe here: the job
     # owns this working directory, and --unlock is a no-op when not locked.
     snakemake --snakefile workflow/Snakefile --unlock --quiet || true
+    # By default Snakemake re-runs a rule when its code or config changed
+    # (provenance).  Set SNAKEMAKE_RERUN_TRIGGERS=mtime to reuse existing outputs
+    # (e.g. keep output/datasets and skip re-fetching) on a resubmission.
+    RERUN_TRIGGERS="${SNAKEMAKE_RERUN_TRIGGERS:-}"
     snakemake \
         --snakefile workflow/Snakefile \
         --cores "${CORES}" \
+        ${RERUN_TRIGGERS:+--rerun-triggers "${RERUN_TRIGGERS}"} \
         --rerun-incomplete \
         --keep-going \
         --printshellcmds \
