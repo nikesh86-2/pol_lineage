@@ -26,11 +26,13 @@ from pathlib import Path
 from typing import Callable
 
 from .config import load_config
+from .pipeline import verify_required_tools
 
 # stage name -> "module:callable"
 STAGES: dict[str, str] = {
     "fetch": "hbvpol.datasets.pipeline:run",
     "deephep": "hbvpol.datasets.deephep:run",
+    "reference": "hbvpol.reference:run",
     "qc": "hbvpol.qc.pipeline:run",
     "recombine": "hbvpol.recombination.pipeline:run",
     "tree": "hbvpol.phylogeny.pipeline:run",
@@ -45,6 +47,7 @@ STAGES: dict[str, str] = {
 ORDER = [
     "fetch",
     "deephep",
+    "reference",
     "qc",
     "recombine",
     "tree",
@@ -89,8 +92,11 @@ def main(argv: list[str] | None = None) -> int:
     # after interleaved optionals).
     args, extras = parser.parse_known_args(argv)
     overrides = [*args.overrides, *(token for token in extras if "=" in token)]
-    config = load_config(args.config, overrides=overrides)
     root = Path(args.root)
+    config = load_config(args.config, overrides=overrides, root=root)
+
+    # A publication run must not silently fall back to pure-Python stand-ins.
+    verify_required_tools(config)
 
     if args.stage == "all":
         for stage in ORDER:

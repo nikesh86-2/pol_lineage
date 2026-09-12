@@ -26,6 +26,7 @@ __all__ = [
     "have_executable",
     "available_cpus",
     "effective_threads",
+    "verify_required_tools",
     "StageError",
 ]
 
@@ -82,6 +83,26 @@ def effective_threads(config: Mapping[str, object], key: str = "project.threads"
     except (TypeError, ValueError):
         requested = default
     return max(1, min(requested, available_cpus()))
+
+
+def verify_required_tools(config: Mapping[str, object]) -> None:
+    """Fail fast when tools listed in ``project.required_tools`` are missing.
+
+    Offline fallbacks (Neighbor-Joining, parsimony, Nussinov, pure-Python
+    bootscan) exist so the pipeline runs without external software, but a
+    publication run must not silently substitute them.  Set
+    ``project.required_tools: [mafft, iqtree, hyphy]`` to make their absence a
+    hard error up front instead of a warning buried in a stage log.
+    """
+    required = get(config, "project.required_tools", []) or []
+    if isinstance(required, str):
+        required = [required]
+    missing = [str(tool) for tool in required if tool and not have_executable(str(tool))]
+    if missing:
+        raise StageError(
+            "required external tools are missing: " + ", ".join(sorted(missing))
+            + " (install them, or clear project.required_tools to allow fallbacks)"
+        )
 
 
 def require_executable(name: str, hint: str = "") -> str:

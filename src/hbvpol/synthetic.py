@@ -233,6 +233,15 @@ def synthetic_overrides(outdir: str | Path, n_genomes: int = 8) -> list[str]:
     return [
         f"project.output_root={outdir}",
         "datasets.hbv.sources=[]",
+        # No annotated reference / derived features in the synthetic harness.
+        "reference.auto_derive=false",
+        # Pin the coordinates the synthetic genomes are actually built with
+        # (build_synthetic uses 3215 bp with Pol at 2307..1623).
+        "reference.length=3215",
+        "reference.origin_nt=1",
+        "reference.pol_start_nt=2307",
+        "reference.pol_end_nt=1623",
+        "project.required_tools=[]",
         # The synthetic Pol ORF is stop-free; S/C ORFs are not modelled.
         "qc.require_complete_orf=[]",
         "qc.exclude_stop_in_pol=true",

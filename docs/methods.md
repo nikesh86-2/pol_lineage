@@ -189,13 +189,40 @@ in [`outputs.md`](outputs.md).
 
 ## Assumptions to revisit before publication
 
-1. **Domain boundaries** are approximate genotype-A2 spans; lift the real
-   annotation per genotype.
-2. **The surface-frame offset** (default +1) should be confirmed against the
-   reference annotation.
-3. **Circularisation** assumes reference numbering unless origin detection is on.
-4. **Offline fallbacks** are for wiring/tests only.
-5. **Covariation capping** is an approximation; use a real DCA backend for a
-   final analysis.
-6. **ε coordinates and the compatibility heuristic** are uncalibrated.
-7. **The DMS map** must be supplied.
+Status after wiring the reference into the pipeline:
+
+1. **Domain boundaries** — the mechanism is now data-driven:
+   `reference.domain_spans` supplies genotype-specific spans and they are
+   clamped to the derived `reference.pol_length_aa`. The shipped fallbacks are
+   still approximate, so supply real per-genotype boundaries for a final run.
+2. **The surface-frame offset** — *resolved automatically.* The `reference`
+   stage computes it as `(s_start − pol_start) mod 3` from the CDS annotation,
+   so it is no longer assumed.
+3. **Circularisation** — origin detection is on (`qc.detect_origin: true`) and
+   anchored to the derived reference sequence, falling back to the configured
+   constant when the seed is absent.
+4. **Offline fallbacks** — set `project.required_tools: [mafft, iqtree2, hyphy]`
+   to make a missing tool a hard, up-front error instead of a silent
+   pure-Python substitute.
+5. **Covariation capping** — still an approximation; use a real DCA backend
+   (`selection.covariation.dca_impl`) for a final analysis.
+6. **ε coordinates and the compatibility heuristic** — still uncalibrated;
+   refine `epsilon.genome_span` per genotype.
+7. **The DMS map** — supplied (`resources/hbv_pol_dms_2024.tsv`).
+
+### Wiring the reference (`hbvpol.reference`)
+
+Hardcoded genotype constants were the source of several of the above. They are
+now derived from the annotated reference and threaded through one merge point:
+
+```
+hbvpol reference -c config/config.yaml        # writes output/reference/*
+    -> reference_features.json                #   {reference: {...}, features: {...}}
+    -> load_config() merges it into `reference`   (config file < derived < overrides)
+    -> qc / dualframe / partition / epsilon / atlas all read the same values
+```
+
+On NC_003977.2 this corrected several shipped constants: the accession is
+**genotype D (ayw), 3182 bp, 832 aa Pol** — not the "genotype A2, 3215 bp,
+843 aa" the config previously claimed — with Pol 2309..1625, surface
+2850..837 and frame offset 1.

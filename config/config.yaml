@@ -11,6 +11,10 @@ project:
   output_root: output            # all generated artefacts land below here
   threads: 8
   seed: 20240911
+  # Fail fast if these external tools are absent, so a publication run never
+  # silently falls back to the pure-Python stand-ins.  Empty = allow fallbacks.
+  #   required_tools: [mafft, iqtree2, hyphy, trimal]
+  required_tools: []
 
 # -----------------------------------------------------------------------------
 # Stage 1a — Human-HBV dataset
@@ -79,21 +83,38 @@ deephep:
 # Stage 2 — Quality control and recombination
 # -----------------------------------------------------------------------------
 reference:
-  # HBV genotype A2 reference (NC_003977, 3215 bp, 843 aa Pol).
+  # NCBI's reference sequence NC_003977.2 is genotype D (ayw): 3182 bp, 832 aa
+  # Pol.  The constants below are *fallbacks*; the `reference` stage derives the
+  # true values from the annotation and load_config overrides them.
   accession: NC_003977
-  length: 3215
+  length: 3182
+  # Derive coordinates from the annotated reference instead of trusting the
+  # constants below.  The `reference` stage writes
+  # <output_root>/reference/reference_features.json, which load_config merges
+  # into this subtree (config file < derived features < explicit overrides).
+  auto_derive: true
+  derived_file: null                   # default reference/reference_features.json
+  genbank_file: null                   # local annotated GenBank; else fetched
   # Circularisation origin, in standard HBV numbering.  The unique EcoRI site
   # defines nt 1, so recutting at the canonical origin is the identity for
-  # records already in standard numbering.  Set qc.detect_origin=true and
-  # reference.sequence to recover the origin for arbitrarily rotated records.
+  # records already in standard numbering.  qc.detect_origin uses the derived
+  # reference to recover the origin for arbitrarily rotated records.
   origin_nt: 1
-  pol_start_nt: 2307                   # P ORF start (A2 convention, wraps origin)
-  pol_end_nt: 1623                     # P ORF end, wraps the origin
-  # Optional explicit ORF spans (standard A2 defaults are used if omitted):
-  # s_start_nt: 155
-  # s_end_nt: 835
-  # c_start_nt: 1901
-  # c_end_nt: 2450
+  pol_start_nt: 2309                   # fallback; derived from the annotation
+  pol_end_nt: 1625                     # P ORF end, wraps the origin
+  # S/C spans are derived from the reference; uncomment to pin them explicitly.
+  # s_start_nt: 2850
+  # s_end_nt: 837
+  # c_start_nt: 1816
+  # c_end_nt: 2454
+  # Pol domain boundaries (amino acids).  null -> the documented fallbacks;
+  # supply genotype-specific spans to make them exact.  Clamped to
+  # reference.pol_length_aa (derived) when present.
+  # domain_spans:
+  #   - {domain: TP,     start: 1,   end: 183}
+  #   - {domain: spacer, start: 184, end: 336}
+  #   - {domain: RT,     start: 337, end: 681}
+  #   - {domain: RNaseH, start: 682, end: 832}
 
 qc:
   min_length: 2800
@@ -104,6 +125,10 @@ qc:
   exclude_stop_in_pol: true
   max_internal_stops: 0
   circularise: true                    # all genomes recut at reference origin
+  # Detect the origin per record by matching the reference (needs
+  # reference.sequence, supplied by the reference stage).  Conservative: it
+  # falls back to reference.origin_nt when the seed cannot be located.
+  detect_origin: true
   dereplicate: true
   dereplicate_identity: 0.9999
 

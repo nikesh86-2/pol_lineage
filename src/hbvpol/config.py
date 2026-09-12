@@ -12,6 +12,7 @@ parsed as YAML so that numbers, booleans and lists round-trip correctly::
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping
@@ -47,14 +48,52 @@ def merge(base: MutableMapping[str, Any], overlay: Mapping[str, Any]) -> Mutable
     return base
 
 
-def load_config(path: str | os.PathLike[str], overrides: Iterable[str] | None = None) -> dict[str, Any]:
-    """Load YAML config, apply dotted overrides, and expand ``${ENV}`` values."""
+def load_config(
+    path: str | os.PathLike[str],
+    overrides: Iterable[str] | None = None,
+    root: str | os.PathLike[str] = ".",
+) -> dict[str, Any]:
+    """Load YAML config, merge derived reference features, apply overrides.
+
+    Precedence is: config file < derived reference features < explicit
+    overrides.  The derived features are produced by the ``reference`` stage
+    (``<output_root>/reference/reference_features.json``); merging them here is
+    the single wiring point that gives every stage reference-exact coordinates.
+    """
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle) or {}
-    if overrides:
-        merge(cfg, parse_overrides(overrides))
+    parsed = parse_overrides(overrides) if overrides else {}
+    # Decide whether to merge derived features using the effective (file +
+    # overrides) value of `reference.auto_derive`, so an override such as
+    # `reference.auto_derive=false` reliably disables the merge.
+    probe = merge(copy.deepcopy(cfg), parsed)
+    if get(probe, "reference.auto_derive", True):
+        derived = _derived_reference(probe, root)
+        if derived:
+            merge(cfg, {"reference": derived})
+    if parsed:
+        merge(cfg, parsed)
     return _expand_env(cfg)
+
+
+def _derived_reference(cfg: Mapping[str, Any], root: str | os.PathLike[str]) -> dict[str, Any]:
+    """Load the ``reference`` subtree written by the reference stage, if any."""
+    if not get(cfg, "reference.auto_derive", True):
+        return {}
+    output_root = Path(str(get(cfg, "project.output_root", "output")))
+    base = output_root if output_root.is_absolute() else Path(root) / output_root
+    configured = get(cfg, "reference.derived_file")
+    relative = Path(str(configured)) if configured else Path("reference") / "reference_features.json"
+    derived_path = relative if relative.is_absolute() else base / relative
+    if not derived_path.exists():
+        return {}
+    try:
+        payload = json.loads(derived_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    subtree = payload.get("reference", {}) or {}
+    return dict(subtree) if isinstance(subtree, Mapping) else {}
 
 
 def _expand_env(node: Any) -> Any:

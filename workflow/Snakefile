@@ -31,6 +31,7 @@ def cli(stage: str) -> str:
 
 
 DATASETS = f"{OUT}/datasets"
+REFERENCE = f"{OUT}/reference"
 QC = f"{OUT}/qc"
 RECOMB = f"{OUT}/recombination"
 PHYLO = f"{OUT}/phylogeny"
@@ -66,10 +67,25 @@ rule build_deephepadnavirus:
         f"{cli('deephep')}"
 
 
+rule derive_reference:
+    """Stage 1c — derive coordinates from the annotated reference genome.
+
+    Writes reference_features.json, which load_config merges into `reference`
+    so QC, selection, epsilon and the atlas all use reference-exact Pol/S/C
+    spans and surface-frame offset instead of the shipped constants.
+    """
+    output:
+        features=f"{REFERENCE}/reference_features.json",
+        fasta=f"{REFERENCE}/reference.fasta",
+    shell:
+        f"{cli('reference')}"
+
+
 rule qc_circularise_and_filter:
     """Stage 2a — recut at the reference origin and filter broken ORFs."""
     input:
         f"{DATASETS}/hbv_genomes.fasta",
+        f"{REFERENCE}/reference_features.json",
     output:
         oriented=f"{QC}/hbv_oriented.fasta",
         passed=f"{QC}/hbv_qc_pass.tsv",

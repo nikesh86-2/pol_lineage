@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..config import get
-from ..domain import domain_of
+from ..domain import domain_of, domain_spans_from_config
 from ..fitness.dms import CRITERIA, score_criteria
 from ..io import read_table, write_table
 from ..pipeline import get_logger, output_dir, stage_dir
@@ -288,17 +288,18 @@ def _derive(atlas: pd.DataFrame, config: dict) -> pd.DataFrame:
         return frame
     frame["pol_position"] = pd.to_numeric(frame["pol_position"], errors="coerce").astype("Int64")
 
-    def _domain(position):
+    def _domain(position, spans):
         if pd.isna(position):
             return "unknown"
         try:
-            return domain_of(int(position)).value
+            return domain_of(int(position), spans).value
         except ValueError:
             return "unknown"
 
-    # `domain` may already exist (from entropy) but only for its own rows; the
-    # outer join leaves other rows blank, so backfill every missing value.
-    derived_domain = frame["pol_position"].map(_domain)
+    # Reference-aware spans (config `reference.domain_spans`, clamped to
+    # `reference.pol_length_aa`).
+    spans = domain_spans_from_config(config)
+    derived_domain = frame["pol_position"].map(lambda position: _domain(position, spans))
     if "domain" in frame.columns:
         existing = frame["domain"].astype("object")
         frame["domain"] = existing.where(existing.notna(), derived_domain)

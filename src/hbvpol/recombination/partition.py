@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import get
-from ..domain import DEFAULT_DOMAIN_SPANS, PolDomain, frame_indices
+from ..domain import PolDomain, domain_spans_from_config, frame_indices
 from ..io import GenomeRecord, read_fasta, write_fasta
 from ..pipeline import get_logger
 
@@ -360,7 +360,7 @@ def extract_domain_subalignments(alignment, config) -> dict[PolDomain, str]:
     pol_start = int(get(config, "reference.pol_start_nt", 1) or 1)
 
     result: dict[PolDomain, str] = {}
-    for span in DEFAULT_DOMAIN_SPANS:
+    for span in domain_spans_from_config(config):
         aa_start, aa_end = span.start, span.end
         nt_start = pol_start + (aa_start - 1) * 3
         nt_length = (aa_end - aa_start + 1) * 3

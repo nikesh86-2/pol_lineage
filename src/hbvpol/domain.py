@@ -28,7 +28,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, Mapping
+
+from .config import get
 
 __all__ = [
     "PolDomain",
@@ -36,6 +38,7 @@ __all__ = [
     "DEFAULT_DOMAIN_SPANS",
     "CANONICAL_MOTIFS",
     "domain_of",
+    "domain_spans_from_config",
     "translate",
     "reverse_complement",
     "revcomp_if_needed",
@@ -88,15 +91,16 @@ class DomainSpan:
         return {"domain": self.domain.value, "start": self.start, "end": self.end}
 
 
-# Approximate spans for the genotype A2 reference (NC_003977, ~843 aa Pol).
-# These are deliberately config-overridable: the pipeline refines them by
-# lifting the reference annotation onto the curated alignment, and different
-# genotypes differ in the exact spacer boundaries.  Use them as defaults only.
+# Approximate Pol domain spans for the NC_003977 reference (genotype D, ayw,
+# 3182 bp, 832 aa Pol).  These are *fallbacks*: the reference stage derives the
+# true ORF coordinates, and `reference.domain_spans` can supply exact,
+# genotype-specific boundaries.  Spans are clamped to `reference.pol_length_aa`
+# so a shorter genotype does not spill past the end of the protein.
 DEFAULT_DOMAIN_SPANS: tuple[DomainSpan, ...] = (
     DomainSpan(PolDomain.TP, 1, 183),
     DomainSpan(PolDomain.SPACER, 184, 336),
     DomainSpan(PolDomain.RT, 337, 681),
-    DomainSpan(PolDomain.RNASEH, 682, 843),
+    DomainSpan(PolDomain.RNASEH, 682, 832),
 )
 
 # Canonical, well-characterised motifs that a *novel* mechanistic target should
@@ -118,6 +122,49 @@ def domain_of(position: int, spans: Iterable[DomainSpan] = DEFAULT_DOMAIN_SPANS)
         if span.contains(position):
             return span.domain
     raise ValueError(f"position {position} falls outside all Pol domains")
+
+
+def domain_spans_from_config(
+    config: Mapping[str, object] | None = None,
+    default: Iterable[DomainSpan] = DEFAULT_DOMAIN_SPANS,
+) -> tuple[DomainSpan, ...]:
+    """Resolve Pol domain spans from config, clamping to the derived Pol length.
+
+    ``reference.domain_spans`` (a list of ``{domain, start, end}``) supplies
+    genotype-specific boundaries; otherwise the fallback spans are used.  When
+    ``reference.pol_length_aa`` is present (written by the reference stage) the
+    final span is clamped so it never exceeds the protein.
+    """
+    spans: tuple[DomainSpan, ...] = tuple(default)
+    if config is not None:
+        raw = get(config, "reference.domain_spans", None)
+        if raw:
+            parsed: list[DomainSpan] = []
+            for entry in raw:
+                try:
+                    parsed.append(
+                        DomainSpan(
+                            PolDomain.parse(str(entry["domain"])),
+                            int(entry["start"]),
+                            int(entry["end"]),
+                        )
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if parsed:
+                spans = tuple(parsed)
+
+        pol_length = get(config, "reference.pol_length_aa", None)
+        try:
+            pol_length = int(pol_length) if pol_length else None
+        except (TypeError, ValueError):
+            pol_length = None
+        if pol_length:
+            spans = tuple(
+                DomainSpan(span.domain, span.start, min(span.end, pol_length))
+                for span in spans
+            )
+    return spans
 
 
 # --- sequence / frame utilities ---------------------------------------------
