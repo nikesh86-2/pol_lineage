@@ -136,6 +136,9 @@ record_tools
 if [ "${STAGE}" = "all" ]; then
     TARGET="${SNAKEMAKE_TARGET:-}"
     echo "== snakemake (cores=${CORES}) target='${TARGET:-all}' =="
+    # Clear any stale lock left by a killed/preempted run.  Safe here: the job
+    # owns this working directory, and --unlock is a no-op when not locked.
+    snakemake --snakefile workflow/Snakefile --unlock --quiet || true
     snakemake \
         --snakefile workflow/Snakefile \
         --cores "${CORES}" \
