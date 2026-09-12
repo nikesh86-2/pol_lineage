@@ -119,8 +119,9 @@ phylogeny:
   max_taxa: 1000
   # Hard guard for the pure-Python Neighbor-Joining fallback: p-distances are
   # O(N^2) and NJ is O(N^3), which never finishes on a large taxon set, so it
-  # refuses rather than hangs.
-  max_nj_taxa: 1000
+  # refuses rather than hangs.  Keep this low: even 1000 taxa is intractable in
+  # pure Python, and IQ-TREE should handle anything larger.
+  max_nj_taxa: 200
 
 recombination:
   tools: [rdp5, gard, threeseq, bootscan]

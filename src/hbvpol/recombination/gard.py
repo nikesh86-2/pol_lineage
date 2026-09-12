@@ -97,14 +97,16 @@ def run_gard(alignment, config, workdir) -> pd.DataFrame:
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    alignment_path = Path(alignment)
+    # Absolute paths: run_command sets cwd=workdir, so relative inputs/outputs
+    # would be re-rooted under it and HyPhy could not find the alignment.
+    alignment_path = Path(alignment).resolve()
 
     executable_name = str(get(config, "recombination.gard.executable", "hyphy") or "hyphy")
     if not (Path(executable_name).exists() or have_executable(executable_name)):
         logger.warning("HyPhy/GARD executable %r not found; skipping GARD", executable_name)
         return _empty()
 
-    json_out = workdir / "gard.GARD.json"
+    json_out = (workdir / "gard.GARD.json").resolve()
     argv = [
         executable_name, "gard",
         "--alignment", str(alignment_path),

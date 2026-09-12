@@ -25,6 +25,9 @@ import pandas as pd
 from ..config import get
 from ..domain import DEFAULT_DOMAIN_SPANS, PolDomain, frame_indices
 from ..io import GenomeRecord, read_fasta, write_fasta
+from ..pipeline import get_logger
+
+logger = get_logger("recombination.partition")
 
 __all__ = [
     "BREAKPOINT_COLUMNS",
@@ -136,9 +139,10 @@ def reconcile_breakpoints(frames: list[pd.DataFrame], config) -> pd.DataFrame:
     Nearby calls (midpoints within ``recombination.breakpoint_tolerance`` nt)
     on the same ``recombinant_id`` are clustered.  A cluster is retained as a
     consensus breakpoint when the number of *distinct* tools supporting it is
-    at least ``ceil(recombination.consensus_frac * n_tools_total)``, where
-    ``n_tools_total`` is the configured tool list (falling back to the number
-    of tools observed).
+    at least ``ceil(recombination.consensus_frac * n_tools_effective)``, where
+    ``n_tools_effective`` counts only the tools that actually produced calls
+    (an uninstalled tool cannot support anything, and counting it would discard
+    every breakpoint when only the offline scan is available).
 
     Returns one row per cluster with the tidy schema plus ``cluster_id``,
     ``n_tools_supporting``, ``n_tools_total`` and a boolean ``consensus``.
@@ -158,9 +162,17 @@ def reconcile_breakpoints(frames: list[pd.DataFrame], config) -> pd.DataFrame:
 
     observed_tools = {str(tool) for tool in combined["tool"].dropna().unique()}
     configured = get(config, "recombination.tools", None)
-    n_tools_total = len(configured) if configured else len(observed_tools)
-    n_tools_total = max(1, int(n_tools_total))
+    configured_count = len(configured) if configured else len(observed_tools)
+    # Count only tools that actually ran: an uninstalled tool cannot support a
+    # breakpoint, and counting it silently discards every call when, e.g., only
+    # the offline bootscan scan is available.
+    n_tools_total = max(1, len(observed_tools) or configured_count)
     needed = max(1, math.ceil(consensus_frac * n_tools_total))
+    if observed_tools and len(observed_tools) < configured_count:
+        logger.warning(
+            "consensus computed from %d of %d configured tools (%s)",
+            len(observed_tools), configured_count, ",".join(sorted(observed_tools)),
+        )
 
     combined = combined.assign(
         _mid=(combined["bp_start"].astype(float) + combined["bp_end"].astype(float)) / 2.0

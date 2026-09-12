@@ -63,7 +63,8 @@ def run_threeseq(alignment, config, workdir) -> pd.DataFrame:
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    alignment_path = Path(alignment)
+    # run_command sets cwd=workdir, so the alignment path must be absolute.
+    alignment_path = Path(alignment).resolve()
 
     executable_name = str(get(config, "recombination.threeseq.executable", "3seq") or "3seq")
     if not (Path(executable_name).exists() or have_executable(executable_name)):

@@ -108,6 +108,8 @@ def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
         logger.warning("mafft not found; using %s unaligned", input_fasta)
         return input_fasta
 
+    # run_command sets cwd=outdir, so the input path must be absolute.
+    input_fasta = Path(input_fasta).resolve()
     threads = effective_threads(config)
     n_seqs = _count_sequences(input_fasta)
     method = ["--retree", "2", "--maxiterate", "0"] if n_seqs > 2000 else ["--auto"]
