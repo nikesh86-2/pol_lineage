@@ -35,6 +35,7 @@ __all__ = [
     "run",
     "build_deephep_dataset",
     "fetch_group_sequences",
+    "probe_group_queries",
     "filter_by_length",
     "align_sequences",
     "maybe_trim_alignment",
@@ -42,18 +43,43 @@ __all__ = [
 
 #: Taxon queries for the configured host groups.  These are working defaults —
 #: they are overridable per group via ``deephep.group_queries``.
-DEFAULT_GROUP_QUERIES: dict[str, str] = {
+#:
+#: Note: ``[Host]`` qualifiers are *not* indexed in the NCBI protein database
+#: (``Hepadnaviridae[Organism] AND Rodentia[Host]`` returns zero), so the
+#: queries below target the actual virus taxa.  Reptile and amphibian
+#: hepadnaviruses have no NCBI protein records at all, so those groups
+#: legitimately return nothing.
+DEFAULT_GROUP_QUERIES: dict[str, object] = {
     "primate": 'Hepadnaviridae[Organism] AND (primates[Host] OR Homo sapiens[Host])',
-    "rodent": "Hepadnaviridae[Organism] AND Rodentia[Host]",
-    "bat": "Hepadnaviridae[Organism] AND Chiroptera[Host]",
+    "rodent": (
+        '(Woodchuck hepatitis virus[Organism] OR Ground squirrel hepatitis virus[Organism]'
+        ' OR "Arctic ground squirrel hepatitis virus"[Organism])'
+    ),
+    "bat": '(Bat hepatitis B virus[Organism] OR Bat hepadnavirus[Organism])',
     "avian": "Avihepadnavirus[Organism]",
-    "reptile": "Hepadnaviridae[Organism] AND Reptilia[Host]",
-    "amphibian": "Hepadnaviridae[Organism] AND Amphibia[Host]",
-    "fish": "Hepadnaviridae[Organism] AND fishes[Host]",
-    "nackednavirus": "Nackednaviridae[Organism]",
+    "reptile": (
+        "(Hepadnaviridae[Organism] AND (Testudines[All Fields] OR Squamata[All Fields]"
+        " OR Crocodilia[All Fields]))"
+    ),
+    "amphibian": (
+        "(Hepadnaviridae[Organism] AND (Anura[All Fields] OR Caudata[All Fields]"
+        " OR Gymnophiona[All Fields]))"
+    ),
+    "fish": (
+        '(Slender scalyhead hepatitis B virus[Organism] OR Scaly rockcod hepatitis B virus[Organism]'
+        ' OR (Hepadnaviridae[Organism] AND fish[All Fields] NOT "Hepatitis B virus"[Organism]))'
+    ),
+    # Nackednaviruses are indexed by protein title, not as an organism taxon, so
+    # this query embeds its own Pol restriction ("polymerase" present means the
+    # generic suffix below is not appended).
+    "nackednavirus": (
+        'nackednavirus[Title] AND (polymerase[Title] OR "reverse transcriptase"[Title]'
+        ' OR P[Title] OR ORF2[Title] OR "RNA-dependent RNA-polymerase"[Title])'
+    ),
 }
 
 #: Appended to taxon queries so that only Pol-family proteins are retrieved.
+#: Override per group with ``deephep.group_query_suffixes`` (empty = none).
 DEFAULT_QUERY_SUFFIX = 'AND (polymerase[Title] OR "reverse transcriptase"[Title])'
 
 
@@ -83,16 +109,30 @@ def _dedupe(records: Iterable[GenomeRecord]) -> list[GenomeRecord]:
 
 
 def _group_query(group: str, config: Mapping[str, Any]) -> str:
-    """Resolve the Entrez query for a taxonomic group or outgroup name."""
+    """Resolve the Entrez query for a taxonomic group or outgroup name.
+
+    A group value may be a string or a list of alternative terms (OR-joined).
+    The Pol-restriction suffix is appended unless the base query already
+    mentions a polymerase, and can be overridden per group via
+    ``deephep.group_query_suffixes`` (an empty string disables it).
+    """
     overrides = get(config, "deephep.group_queries", {}) or {}
     if group in overrides:
-        base = str(overrides[group])
+        base: object = overrides[group]
     elif group in DEFAULT_GROUP_QUERIES:
         base = DEFAULT_GROUP_QUERIES[group]
     else:
         base = group  # free-text term, e.g. a plant pararetrovirus family
 
-    suffix = get(config, "deephep.query_suffix", DEFAULT_QUERY_SUFFIX) or ""
+    if isinstance(base, (list, tuple)):
+        base = "(" + " OR ".join(str(item) for item in base) + ")"
+    base = str(base)
+
+    suffixes = get(config, "deephep.group_query_suffixes", {}) or {}
+    if group in suffixes:
+        suffix = str(suffixes[group] or "")
+    else:
+        suffix = get(config, "deephep.query_suffix", DEFAULT_QUERY_SUFFIX) or ""
     if suffix and "polymerase" not in base.lower():
         return f"({base}) {suffix}"
     return base
@@ -144,7 +184,9 @@ def fetch_group_sequences(group: str, config: Mapping[str, Any]) -> list[GenomeR
         search = cast(dict[str, Any], Entrez.read(handle))
     ids = [str(item) for item in search.get("IdList", [])]
     if not ids:
-        logger.info("deephep: no protein hits for %s", group)
+        # Log the exact query: a zero here is usually a bad taxon name, not an
+        # absence of data.
+        logger.warning("deephep: no protein hits for %s (query: %s)", group, query)
         return []
 
     records: list[GenomeRecord] = []
@@ -270,6 +312,41 @@ def maybe_trim_alignment(path: str | Path, config: Mapping[str, Any]) -> Path:
 # --------------------------------------------------------------------------- #
 
 
+def _collect_terms(config: Mapping[str, Any]) -> list[str]:
+    terms: list[str] = [str(g) for g in (get(config, "deephep.taxonomic_groups", []) or [])]
+    if get(config, "deephep.include_nackednavirus", False):
+        terms.append("nackednavirus")
+    if get(config, "deephep.include_rt_outgroups", False):
+        terms.extend(str(item) for item in (get(config, "deephep.outgroups", []) or []))
+    return terms
+
+
+def probe_group_queries(config: Mapping[str, Any]) -> dict[str, int]:
+    """Return the esearch hit count for every configured group query.
+
+    A zero count almost always means the taxon name is wrong rather than that
+    the data are absent, so this is the first thing to run when a group comes
+    back empty.  Network access is confined here.
+    """
+    from Bio import Entrez
+
+    email = get(config, "datasets.hbv.genbank.email") or get(config, "deephep.email")
+    if not email:
+        raise StageError(
+            "probing deep-hepadnavirus queries requires datasets.hbv.genbank.email "
+            "(or deephep.email) for NCBI E-utilities"
+        )
+    Entrez.email = str(email)
+    Entrez.tool = "hbvpol"
+
+    counts: dict[str, int] = {}
+    for term in _collect_terms(config):
+        with Entrez.esearch(db="protein", term=_group_query(term, config), retmax=0) as handle:
+            payload = cast(dict[str, Any], Entrez.read(handle))
+        counts[term] = int(payload.get("Count", 0) or 0)
+    return counts
+
+
 def build_deephep_dataset(
     config: Mapping[str, Any],
     out_fasta: str | Path,
@@ -283,11 +360,7 @@ def build_deephep_dataset(
     out_fasta = Path(out_fasta)
     out_alignment = Path(out_alignment)
 
-    terms: list[str] = [str(g) for g in (get(config, "deephep.taxonomic_groups", []) or [])]
-    if get(config, "deephep.include_nackednavirus", False):
-        terms.append("nackednavirus")
-    if get(config, "deephep.include_rt_outgroups", False):
-        terms.extend(str(item) for item in (get(config, "deephep.outgroups", []) or []))
+    terms: list[str] = _collect_terms(config)
 
     collected: list[GenomeRecord] = []
     counts: dict[str, int] = {}

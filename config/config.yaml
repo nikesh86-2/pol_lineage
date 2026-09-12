@@ -72,6 +72,20 @@ deephep:
   outgroups:
     - "Caulimoviridae"                 # plant pararetroviruses (RT homologues)
     - "Ty3/Gypsy LTR retrotransposons"
+  # Retrieval is driven by per-group Entrez queries (defaults in
+  # hbvpol.datasets.deephep.DEFAULT_GROUP_QUERIES).  [Host] qualifiers are not
+  # indexed in the NCBI protein database, so the defaults target virus taxa.
+  # Override a group with a string or a list of alternative terms:
+  # group_queries:
+  #   bat: "(Bat hepatitis B virus[Organism] OR Bat hepadnavirus[Organism])"
+  #   rodent: ["Woodchuck hepatitis virus[Organism]", "Ground squirrel hepatitis virus[Organism]"]
+  # Per-group Pol-restriction suffix; an empty string disables it.
+  # group_query_suffixes:
+  #   nackednavirus: "AND (polymerase[Title] OR P[Title] OR ORF2[Title])"
+  # Reptile and amphibian hepadnaviruses have no NCBI protein records, so those
+  # groups legitimately return zero (see docs/datasets.md).
+  max_per_group: 500
+  fetch_batch_size: 200
   min_pol_length: 500
   max_pol_length: 1200
   # Alignment: MAFFT L-INS-i for < 200 seqs, then HMMER/Pfam-guided profile

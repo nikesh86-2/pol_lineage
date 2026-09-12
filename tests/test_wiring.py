@@ -178,3 +178,72 @@ def test_bootscan_min_region_len_filters_short_regions():
     )
     assert len(kept) > 0
     assert len(filtered) == 0
+
+
+# --------------------------------------------------------------------------- #
+# deep-hepadnavirus group queries
+# --------------------------------------------------------------------------- #
+def test_group_query_list_override_and_suffix_control():
+    from hbvpol.datasets.deephep import _group_query
+
+    config = {
+        "deephep": {
+            "group_queries": {
+                "bat": ["Bat hepatitis B virus[Organism]", "Bat hepadnavirus[Organism]"],
+            },
+            "group_query_suffixes": {"bat": ""},
+        }
+    }
+    query = _group_query("bat", config)
+    assert "Bat hepatitis B virus[Organism]" in query
+    assert "Bat hepadnavirus[Organism]" in query
+    assert " OR " in query
+    # An empty per-group suffix disables the Pol restriction entirely.
+    assert "polymerase[Title]" not in query
+
+
+def test_group_query_appends_default_suffix_once():
+    from hbvpol.datasets.deephep import _group_query
+
+    # A taxon query with no Pol terms gets the generic suffix appended.
+    appended = _group_query("primate", {})
+    assert appended.count("polymerase[Title]") == 1
+
+    # The nackednavirus default already embeds its own Pol restriction
+    # (indexed by protein title), so the generic suffix must NOT be added.
+    nacked = _group_query("nackednavirus", {})
+    assert "nackednavirus[Title]" in nacked
+    assert nacked.count("polymerase[Title]") == 1
+    assert "P[Title]" in nacked and "ORF2[Title]" in nacked
+
+
+def test_probe_group_queries_counts(monkeypatch):
+    Bio = pytest.importorskip("Bio")
+    from hbvpol.datasets.deephep import probe_group_queries
+
+    calls = []
+
+    class _Handle:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _FakeEntrez:
+        email = None
+        tool = None
+
+        def esearch(self, **kwargs):
+            calls.append(kwargs.get("term"))
+            return _Handle()
+
+        def read(self, handle):
+            return {"Count": "42"}
+
+    monkeypatch.setattr(Bio, "Entrez", _FakeEntrez(), raising=False)
+    config = {"datasets": {"hbv": {"genbank": {"email": "x@y"}}},
+              "deephep": {"taxonomic_groups": ["bat", "rodent"]}}
+    counts = probe_group_queries(config)
+    assert counts == {"bat": 42, "rodent": 42}
+    assert any("Bat hepatitis B virus[Organism]" in term for term in calls)

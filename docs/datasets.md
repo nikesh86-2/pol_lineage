@@ -55,6 +55,33 @@ Alignment strategy:
 Everything is optional: with no network the stage produces a documented,
 logged placeholder rather than failing.
 
+### Group queries
+
+Retrieval is driven by per-group Entrez queries. Two pitfalls shape the
+shipped defaults (`DEFAULT_GROUP_QUERIES`):
+
+* **`[Host]` is not indexed in the NCBI protein database.**
+  `Hepadnaviridae[Organism] AND Rodentia[Host]` returns **zero** even though
+  rodent hepadnaviruses exist. The default queries therefore target the actual
+  **virus taxa**: `Woodchuck hepatitis virus`, `Ground squirrel hepatitis
+  virus`, `Bat hepatitis B virus`, `Avihepadnavirus`, and so on.
+* **Nackednaviruses are not indexed as an organism.**
+  `Nackednaviridae[Organism]` and `Nackednavirus[Organism]` both return zero;
+  the sequences are reachable by protein title (`nackednavirus[Title]`), where
+  the Pol is annotated as `P`, `ORF2` or “reverse transcriptase”. That query
+  embeds its own Pol restriction so the generic suffix is not applied.
+
+Override a group with `deephep.group_queries` (a string or a list of
+alternative terms) and adjust the Pol-restriction filter with
+`deephep.group_query_suffixes`. `probe_group_queries(config)` prints the hit
+count per group and should be the first thing you run when a group comes back
+empty — a zero is usually a wrong taxon name, not missing data.
+
+**Data limitation:** there are currently no hepadnavirus protein records in
+NCBI for **reptile or amphibian** hosts, so those groups legitimately return
+zero. They are retained in the configuration so the gap is explicit and fills
+automatically if such records are deposited.
+
 **Why this resolves a different question:** the deep alignment separates
 features that belong to modern human HBV from those that have survived hundreds
 of millions of years. Published structural prediction places TP around RT and
