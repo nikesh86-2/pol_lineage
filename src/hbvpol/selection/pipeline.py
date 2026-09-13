@@ -33,8 +33,17 @@ from ..config import get
 from ..coordinates import reference_positions, reference_sequence_from_config
 from ..io import GenomeRecord, read_fasta, read_table, write_table
 from ..pipeline import get_logger, have_executable, output_dir, run_command, stage_dir
+from ..phylogeny.trees import _sanitize_name, newick_leaf_names
 from .covariation import COVARIATION_COLUMNS, EPISTASIS_COLUMNS, covarying_pairs, epistasis_pairs
-from .dualframe import DUAL_FRAME_COLUMNS, coerce_alignment, dual_frame_table, translate_pol_alignment
+from .dualframe import (
+    DUAL_FRAME_COLUMNS,
+    _position_in_frame_range,
+    alignment_width,
+    coerce_alignment,
+    codon_index_from_position,
+    dual_frame_table,
+    translate_pol_alignment,
+)
 from .entropy import ENTROPY_COLUMNS, per_position_entropy
 from .genotype import GENOTYPE_COLUMNS, genotype_specificity
 from .resistance import RESISTANCE_COLUMNS, resistance_table
@@ -102,13 +111,107 @@ def _parse_hyphy_sites(payload: dict, method: str) -> list[dict]:
     return rows
 
 
-def run_hyphy_method(alignment, tree, method: str, config) -> pd.DataFrame:
+def _restrict_and_prune(records, tree, workdir: Path, method: str):
+    """Restrict an alignment to the tree's taxa and prune the tree to match.
+
+    IQ-TREE sanitises leaf names, so records are matched after the same
+    sanitisation.  HyPhy requires the alignment and tree to describe exactly the
+    same taxa; without this the method fails soft and silently yields nothing.
+    """
+    try:
+        tree_text = Path(tree).read_text(encoding="utf-8")
+        taxa = set(newick_leaf_names(tree_text))
+    except Exception as error:  # pragma: no cover - malformed tree
+        logger.warning("could not read tree taxa for hyphy %s: %s", method, error)
+        return records, tree
+    if not taxa:
+        return records, tree
+
+    keep = [record for record in records if _sanitize_name(record.id) in taxa]
+    if not keep:
+        return [], tree
+    keep_names = {_sanitize_name(record.id) for record in keep}
+    try:
+        from io import StringIO
+
+        from Bio import Phylo
+
+        tree_obj = Phylo.read(StringIO(tree_text), "newick")
+        for clade in list(tree_obj.get_terminals()):
+            if clade.name not in keep_names:
+                tree_obj.prune(clade)
+        pruned_path = workdir / f"hyphy_{method}_tree.nwk"
+        handle = StringIO()
+        Phylo.write(tree_obj, handle, "newick")
+        pruned_path.write_text(handle.getvalue(), encoding="utf-8")
+        return keep, pruned_path
+    except Exception as error:  # pragma: no cover - depends on tree shape
+        logger.warning("could not prune tree for hyphy %s (%s); using it unchanged", method, error)
+        return keep, tree
+
+
+def _map_hyphy_sites(rows, positions, genome_length, width, config):
+    """Remap HyPhy site indices to reference-frame Pol residue positions.
+
+    HyPhy reports per-nucleotide or per-codon sites depending on the model it
+    inferred; the scale is detected by comparing the highest reported site with
+    the alignment width.  Sites outside the Pol ORF, or on an insertion column,
+    are dropped so ``pol_position`` stays a reference-frame Pol residue like
+    every other table.
+    """
+    if not rows or not positions or not genome_length:
+        return rows
+    pol_start = int(get(config, "reference.pol_start_nt", 1) or 1)
+    pol_end = get(config, "reference.pol_end_nt", None)
+    try:
+        pol_end = int(pol_end) if pol_end is not None else None
+    except (TypeError, ValueError):
+        pol_end = None
+
+    n_sites = max(int(row["pol_position"]) for row in rows)
+    tolerance = max(1, width // 30)
+    scale = 1
+    if width and abs(n_sites - width) > tolerance and abs(n_sites - width // 3) <= tolerance:
+        scale = 3
+
+    mapped: list[dict] = []
+    for row in rows:
+        column = (int(row["pol_position"]) - 1) * scale
+        if column < 0 or column >= len(positions):
+            continue
+        reference_position = positions[column]
+        if reference_position is None:
+            continue
+        if not _position_in_frame_range(reference_position, pol_start, pol_end, genome_length):
+            continue
+        remapped = dict(row)
+        remapped["pol_position"] = codon_index_from_position(
+            reference_position, pol_start, genome_length
+        )
+        mapped.append(remapped)
+    return mapped
+
+
+def run_hyphy_method(
+    alignment,
+    tree,
+    method: str,
+    config,
+    positions=None,
+    genome_length: int | None = None,
+) -> pd.DataFrame:
     """Run a HyPhy per-site selection method and return a tidy frame.
 
     Returns columns ``pol_position, method, statistic, pvalue, significant``
-    (the pipeline adds ``lineage``).  HyPhy (and ``subprocess``) are only
-    touched when the executable is actually present; otherwise — or on any
-    failure — a schema-correct empty frame is returned with a warning.
+    (the pipeline adds ``lineage``).  The alignment is restricted to the taxa in
+    the tree and the tree pruned to match, because HyPhy requires identical
+    taxa.  When the column -> reference-position map is supplied, site indices
+    are remapped to reference-frame Pol residues; otherwise they are left as
+    reported.
+
+    HyPhy (and ``subprocess``) are only touched when the executable is actually
+    present; otherwise -- or on any failure -- a schema-correct empty frame is
+    returned with a warning.
     """
     if not have_executable("hyphy"):
         logger.warning("hyphy not found; %s selection sites will be empty", method)
@@ -124,6 +227,16 @@ def run_hyphy_method(alignment, tree, method: str, config) -> pd.DataFrame:
     records = coerce_alignment(alignment)
     if not records:
         return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
+    width = alignment_width(records)
+
+    records, hyphy_tree = _restrict_and_prune(records, tree, outdir, str(method))
+    if len(records) < 2 or hyphy_tree is None:
+        logger.warning(
+            "hyphy %s: alignment and tree share fewer than two taxa; nothing to test",
+            method,
+        )
+        return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
+
     alignment_path = workdir / f"selection_{method}.fasta"
     alignment_path.write_text(
         "".join(f">{record.id}\n{record.seq}\n" for record in records), encoding="utf-8"
@@ -135,7 +248,7 @@ def run_hyphy_method(alignment, tree, method: str, config) -> pd.DataFrame:
             [
                 "hyphy", str(method),
                 "--alignment", str(alignment_path),
-                "--tree", str(tree),
+                "--tree", str(hyphy_tree),
                 "--output", str(output_path),
             ],
             cwd=outdir,
@@ -149,6 +262,14 @@ def run_hyphy_method(alignment, tree, method: str, config) -> pd.DataFrame:
         return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
 
     if not rows:
+        return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
+    rows = _map_hyphy_sites(rows, positions, genome_length, width, config)
+    if not rows:
+        logger.warning(
+            "hyphy %s produced sites, but none mapped onto the Pol ORF; "
+            "check the reference frame and model type",
+            method,
+        )
         return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
     return pd.DataFrame(rows, columns=_SITE_BASE_COLUMNS)
 
@@ -319,7 +440,13 @@ def run(config: dict, root) -> dict[str, Path]:
         )
         for method in methods:
             site_frames.append(
-                _with_lineage(run_hyphy_method(subset, tree, str(method), config), lineage, SELECTION_SITE_COLUMNS)
+                _with_lineage(
+                    run_hyphy_method(
+                        subset, tree, str(method), config, positions, genome_length
+                    ),
+                    lineage,
+                    SELECTION_SITE_COLUMNS,
+                )
             )
         logger.info("selection: lineage %r has %d sequences", lineage, len(subset))
 

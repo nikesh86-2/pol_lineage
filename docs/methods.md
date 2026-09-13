@@ -107,6 +107,18 @@ from the column map (see *Reference-frame coordinates* below), so a genotype's
 inserted residues are retained in domain sub-alignments but do not shift the
 numbering of anything downstream.
 
+### Per-site selection (HyPhy)
+
+`fel`, `meme`, `fubar` and `busted` are delegated to HyPhy when it is present.
+Because the genotype tree is inferred from a capped subsample, the alignment is
+restricted to the tree's taxa (matched after IQ-TREE's leaf-name sanitisation)
+and the tree pruned to match, since HyPhy requires identical taxa; if fewer than
+two taxa overlap, the method returns a schema-correct empty table with a
+warning. Reported site indices are remapped through the column map to
+reference-frame Pol residues, and sites outside the Pol ORF (or on insertion
+columns) are dropped. Global tests such as `busted` legitimately report no
+per-site rows.
+
 ---
 
 ## Stage 4 — A structural ensemble, not one static model
