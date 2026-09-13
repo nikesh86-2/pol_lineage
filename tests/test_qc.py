@@ -323,6 +323,21 @@ def test_ymdd_origin_falls_back_to_constant(tmp_path):
     assert oriented.metadata["origin_method"] == "constant"
 
 
+def test_auto_origin_prefers_the_exact_seed(tmp_path):
+    reference = _random_dna(200, seed=88)
+    path = write_fasta([GenomeRecord(id="ref", seq=reference)], tmp_path / "reference.fasta")
+    config = {
+        "reference": {"sequence": str(path), "origin_nt": 1},
+        "qc": {"detect_origin": True, "origin_method": "auto"},
+    }
+    target = rotate_to_origin(reference, 75)
+
+    (oriented,) = circularise_genomes([GenomeRecord(id="t", seq=target)], config)
+    assert oriented.seq == reference
+    # The exact origin seed is origin-anchored, so it is preferred over YMDD.
+    assert oriented.metadata["origin_method"] == "seed"
+
+
 def test_seed_origin_method_still_available(tmp_path):
     reference = _random_dna(200, seed=77)
     path = write_fasta([GenomeRecord(id="ref", seq=reference)], tmp_path / "reference.fasta")

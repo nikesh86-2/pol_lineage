@@ -252,6 +252,8 @@ def synthetic_overrides(outdir: str | Path, n_genomes: int = 8) -> list[str]:
         "selection.methods=[]",
         "selection.covariation.min_seqs=4",
         "selection.covariation.max_positions=150",
+        # Offline harness: allow the APC-corrected-MI proxy when plmc is absent.
+        "selection.covariation.require_backend=false",
         "selection.epistasis.min_support=0.0",
         "selection.epistasis.max_positions=150",
         "structure.strategies=[]",

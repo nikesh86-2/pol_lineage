@@ -124,6 +124,8 @@ def test_cli_accepts_trailing_overrides(tmp_path):
     outdir = tmp_path / "output"
     build_synthetic(outdir, n_genomes=4, seed=3)
     code = main(["qc", "-c", str(CONFIG), "--root", str(tmp_path),
-                 f"project.output_root={outdir}"])
+                 f"project.output_root={outdir}",
+                 "project.required_tools=[]",
+                 "selection.covariation.require_backend=false"])
     assert code == 0
     assert (outdir / "qc" / "hbv_qc_pass.tsv").exists()

@@ -146,13 +146,21 @@ qc:
   max_internal_stops: 0
   circularise: true                    # all genomes recut at reference origin
   # Detect the origin per record by matching the reference (needs
-  # reference.sequence, supplied by the reference stage).  With
-  # origin_method: ymdd (default) the invariant YMDD motif anchors the rotation
-  # and detects reverse-complemented records; this works for every human
-  # genotype, unlike the exact-25-mer seed.  Falls back to the seed, then to
-  # reference.origin_nt.  Set origin_method: seed for the old behaviour.
+  # reference.sequence, supplied by the reference stage).  origin_method: auto
+  # (default) tries the exact reference-origin seed first (origin-anchored; most
+  # GenBank records are rotated), then the invariant YMDD motif for records whose
+  # origin k-mer is not conserved (divergent genotypes) or which are
+  # reverse-oriented, then reference.origin_nt.  A small YMDD offset is
+  # arbitrated by ORF integrity.  Force one detector with seed|ymdd; set
+  # origin_method: constant to disable detection.
   detect_origin: true
-  origin_method: ymdd
+  origin_method: auto
+  # A small YMDD-anchor offset is more often an indel than a real rotation, and
+  # rotating anyway would shift the reading frame. Below ymdd_min_rotation nt
+  # the ORF criterion arbitrates: keep the anchor rotation only when it reduces
+  # internal stops. Larger offsets are treated as unambiguous rotations.
+  ymdd_arbitrate_rotation: true
+  ymdd_min_rotation: 30
   origin_seed_len: 25
   dereplicate: true
   dereplicate_identity: 0.9999

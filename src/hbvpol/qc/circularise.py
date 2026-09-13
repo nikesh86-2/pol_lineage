@@ -80,29 +80,63 @@ def find_origin_by_reference(seq: str, ref_seq: str, seed_len: int = 25) -> int 
     return index + 1
 
 
+def _orf_stop_score(seq: str, config) -> int:
+    """Total internal stop codons across the required ORFs (lower is better).
+
+    Used to arbitrate between the anchor rotation and leaving a record in its
+    own numbering: a genuine rotation takes a record from broken to intact
+    ORFs, whereas a small anchor offset driven by an *indel* would break an
+    otherwise-correct frame.  This makes QC's own criterion the arbiter rather
+    than committing to one heuristic.
+    """
+    from .orfcheck import check_orf
+
+    length = len(seq)
+    if length == 0:
+        return 0
+    spans = (
+        (int(get(config, "reference.pol_start_nt", 1) or 1),
+         int(get(config, "reference.pol_end_nt", length) or length)),
+        (int(get(config, "reference.s_start_nt", 155) or 155),
+         int(get(config, "reference.s_end_nt", 835) or 835)),
+        (int(get(config, "reference.c_start_nt", 1901) or 1901),
+         int(get(config, "reference.c_end_nt", 2450) or 2450)),
+    )
+    total = 0
+    for start, end in spans:
+        start = ((start - 1) % length) + 1
+        end = ((end - 1) % length) + 1
+        total += int(check_orf(seq, start, end, length, max_internal_stops=0)["internal_stops"])
+    return total
+
+
 def circularise_genomes(records: Iterable[GenomeRecord], config) -> list[GenomeRecord]:
     """Recut every record at the reference origin (``reference.origin_nt``).
 
     Each returned record is a copy whose ``metadata`` records the applied
     ``origin_shift`` (0-based left rotation), the ``origin_nt_used`` and the
-    ``origin_method`` that resolved it.  Three strategies are tried in order
-    when ``qc.detect_origin`` is on and a reference sequence is available:
+    ``origin_method`` that resolved it.  With ``qc.detect_origin`` on and a
+    reference sequence available, ``qc.origin_method: auto`` (default) tries:
 
-    1. ``qc.origin_method: ymdd`` (default) -- align the invariant YMDD catalytic
-       motif (which tolerates synonymous codon variants and detects the opposite
-       strand) with :func:`hbvpol.calibrate.orient_to_reference`.  This works for
-       every human genotype, unlike the exact-25-mer seed, and re-orients
-       reverse-complemented records such as V01460.  Its assumption is that no
-       indel separates the origin from the anchor motif (position 738 in the
-       reference), which holds across human genotypes.
-    2. the exact reference-origin k-mer seed (:func:`find_origin_by_reference`);
-    3. the configured constant (``reference.origin_nt``), which assumes the
-       record already uses the reference numbering.
+    1. the exact reference-origin k-mer seed (:func:`find_origin_by_reference`)
+       -- origin-anchored and unambiguous, and it resolves the bulk of GenBank
+       records (which are rotated, not standard-numbered);
+    2. the invariant YMDD catalytic motif
+       (:func:`hbvpol.calibrate.orient_to_reference`), consulted only when the
+       seed fails -- it tolerates synonymous codon variants and detects the
+       opposite strand, which is what rescue divergent-genotype and
+       reverse-oriented records.  Because one anchor cannot tell a rotation from
+       an indel upstream of the motif, a small implied offset is arbitrated by
+       ORF integrity (keep the rotation only when it reduces internal stops);
+    3. the configured constant (``reference.origin_nt``).
+
+    ``origin_method: seed`` or ``ymdd`` force one detector; ``constant``
+    disables detection.
     """
     configured_origin = int(get(config, "reference.origin_nt", 1) or 1)
     detect = bool(get(config, "qc.detect_origin", False))
     seed_len = int(get(config, "qc.origin_seed_len", 25) or 25)
-    method = str(get(config, "qc.origin_method", "ymdd") or "ymdd").strip().lower()
+    method = str(get(config, "qc.origin_method", "auto") or "auto").strip().lower()
     ref_seq = _reference_sequence(config) if detect else None
 
     oriented: list[GenomeRecord] = []
@@ -119,16 +153,8 @@ def circularise_genomes(records: Iterable[GenomeRecord], config) -> list[GenomeR
         origin = configured_origin
         resolved_by = "constant"
 
-        if ref_seq and method in {"ymdd", "auto"}:
-            anchored = orient_to_reference(seq, ref_seq)
-            if anchored is not None:
-                oriented_seq, detected_strand, shift = anchored
-                if detected_strand in {"-", "-1"}:
-                    strand = "+"
-                origin = shift + 1
-                resolved_by = "ymdd"
-
-        if oriented_seq is None and ref_seq:
+        # 1. exact reference-origin seed (origin-anchored, unambiguous).
+        if ref_seq and method in {"auto", "seed"}:
             found = find_origin_by_reference(seq, ref_seq, seed_len=seed_len)
             if found is not None:
                 oriented_seq = rotate_to_origin(seq, found)
@@ -136,6 +162,37 @@ def circularise_genomes(records: Iterable[GenomeRecord], config) -> list[GenomeR
                 origin = found
                 resolved_by = "seed"
 
+        # 2. YMDD anchor: works for genotypes whose origin k-mer is not
+        #    conserved, and detects the opposite strand.  Only consulted when the
+        #    seed fails, because the anchor cannot distinguish a rotation from an
+        #    indel upstream of the motif.
+        if oriented_seq is None and ref_seq and method in {"auto", "ymdd"}:
+            anchored = orient_to_reference(seq, ref_seq)
+            if anchored is not None:
+                oriented_seq, detected_strand, shift = anchored
+                strand = "+"
+                origin = shift + 1
+                resolved_by = "ymdd"
+                if bool(get(config, "qc.ymdd_arbitrate_rotation", True)):
+                    # A small anchor offset is more often an indel than a real
+                    # rotation; let the ORF criterion decide.  A large offset is
+                    # an unambiguous rotation.
+                    min_rotation = int(get(config, "qc.ymdd_min_rotation", 30) or 0)
+                    distance = min(shift % length, (-shift) % length)
+                    if distance < min_rotation:
+                        unrotated = (
+                            reverse_complement(seq)
+                            if detected_strand in {"-", "-1"}
+                            else seq
+                        )
+                        if _orf_stop_score(unrotated, config) < _orf_stop_score(oriented_seq, config):
+                            oriented_seq = unrotated
+                            shift = 0
+                            origin = 1
+                            resolved_by = "unrotated"
+
+        # 3. configured constant: assume the record already uses the reference
+        #    numbering (or that the caller knowingly disabled detection).
         if oriented_seq is None:
             origin = ((configured_origin - 1) % length) + 1
             oriented_seq = rotate_to_origin(seq, origin)
