@@ -12,9 +12,10 @@ project:
   threads: 8
   seed: 20240911
   # Fail fast if these external tools are absent, so a publication run never
-  # silently falls back to the pure-Python stand-ins.  Empty = allow fallbacks.
-  #   required_tools: [mafft, iqtree2, hyphy, trimal]
-  required_tools: []
+  # silently falls back to the pure-Python stand-ins.  Names must match the
+  # binaries on PATH (this cluster ships IQ-TREE as `iqtree`, not `iqtree2`).
+  # Leave empty to allow fallbacks (offline tests / smoke runs).
+  required_tools: [mafft, iqtree, hyphy, trimal, plmc, 3seq, cd-hit-est]
 
 # -----------------------------------------------------------------------------
 # Stage 1a — Human-HBV dataset
@@ -249,7 +250,7 @@ selection:
     min_seqs: 500
     # Fail instead of silently using the APC-corrected MI proxy when a real DCA
     # backend is required (set true for a publication run).
-    require_backend: false
+    require_backend: true
     # Pairwise metrics are O(L^2). Scan only variable columns, and cap them.
     min_entropy: 0.05          # bits; skip near-invariant columns
     max_positions: 600         # performance guard (keep the most entropic)
