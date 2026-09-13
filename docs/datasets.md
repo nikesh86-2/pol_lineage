@@ -33,6 +33,41 @@ Selection by title is deliberately permissive and then filtered hard by QC
 (see below): near-complete genomes with small terminal truncations are retained,
 heavily ambiguous or frameshifted records are not.
 
+### Cross-validation hierarchy
+
+GenBank is the **primary retrieval layer** (accession versions, annotations,
+translations, checksums). Specialist resources are validation layers, never
+dependencies:
+
+1. primary retrieval — NCBI GenBank / NCBI Virus;
+2. independent annotation — HBV-GLUE (local, commit-pinned);
+3. resistance validation — Stanford HBVseq / HBV RT database (RT region only);
+4. legacy comparison — a checksummed HBVdb snapshot, if reachable;
+5. local checks — translation, motifs, genotype placement, feature coordinates.
+
+`hbvpol.datasets.crosscheck` never blocks the pipeline: it writes
+`datasets/crosscheck_status.json` carrying `hbvdb_status`, `hbv_glue_status`,
+`stanford_hbvseq_status`, `crosscheck_status`, `crosscheck_date` and
+`crosscheck_details`. States are `matched | conflict | not_found |
+not_attempted | service_unavailable | not_applicable`, so an unreachable HBVdb
+becomes `hbvdb_status = service_unavailable` and `crosscheck_status = partial` —
+never "record invalid". Phase-1 success is: GenBank annotation agrees with the
+local translation **and** the sequence places in the expected HBV-GLUE clade
+**and** the major Pol motifs are coherent; HBVdb is supporting evidence, not a
+gate.
+
+Pin the GLUE repositories rather than tracking a moving master:
+
+```bash
+git clone https://github.com/giffordlabcvr/HBV-GLUE.git external/HBV-GLUE
+git -C external/HBV-GLUE rev-parse HEAD > results/metadata/hbv_glue.commit.txt
+```
+
+If HBVdb becomes reachable, snapshot it once under `external/hbvdb_snapshot/`
+with a `provenance.tsv` (retrieval date, source URL) and `checksums.sha256`;
+never require live access during a run, and check licensing before
+redistribution.
+
 ## 2. Deep-hepadnavirus / nackednavirus dataset
 
 `hbvpol.datasets.deephep` builds a Pol-homologue alignment spanning the
@@ -77,10 +112,53 @@ alternative terms) and adjust the Pol-restriction filter with
 count per group and should be the first thing you run when a group comes back
 empty — a zero is usually a wrong taxon name, not missing data.
 
-**Data limitation:** there are currently no hepadnavirus protein records in
-NCBI for **reptile or amphibian** hosts, so those groups legitimately return
-zero. They are retained in the configuration so the gap is explicit and fills
-automatically if such records are deposited.
+**Amphibian, reptile and fish coverage comes from a curated manifest, not a broader taxon query.** The original gap was a *query-scope* problem: `txid10407[Organism:exp]` is human HBV and returns none of the Tibetan frog, fish meta/parahepadna-, avihepadna- or most bat viruses. Two changes fix it:
+
+* the deep branch queries the **Hepadnaviridae family** (and the per-group virus taxa above), never the human HBV taxon;
+* a version-controlled manifest, `config/deep_hepadnavirus_references.tsv`, pins the publication set (RefSeq representatives plus curated publication accessions). Database queries *discover* candidates; the manifest *controls* the dataset.
+
+Manifest columns: `accession, display_name, genus, host_class, host_species,
+sequence_origin, expected_complete, include_pol_tree, include_codon_analysis,
+include_structure_analysis, source_publication, notes`. Pol is extracted per
+record: the deposited CDS `translation` when present, otherwise a translation of
+the CDS location (see `_pol_from_genbank`). A retrieval table is written to
+`datasets/deephep_provenance.tsv`.
+
+### Provenance categories
+
+`sequence_origin` is one of `exogenous_complete`, `exogenous_partial`,
+`assembly_derived_complete`, `assembly_derived_partial`,
+`endogenous_complete_or_near_complete`, `endogenous_fragment`,
+`metagenomic_unverified`. Do **not** pool these silently:
+
+* **extant exogenous Pol** — mechanism, domains, structural conservation;
+* **assembly-derived Pol** (WGS/TSA/SRA) — expanded lineage discovery, moderate confidence;
+* **endogenous fragments** — deep-history evidence and motif/domain analyses only.
+
+Endogenous elements may carry frameshifts, stop codons, host insertions,
+fragmented Pol and ancient substitutions accumulated without viral replication,
+so `include_codon_analysis` should be `no`/`conditional` for them. They are
+integrated, not extant infectious genomes.
+
+### Honest coverage states
+
+Report coverage rather than forcing every vertebrate class to be equal:
+
+| Clade | Coverage |
+|---|---|
+| Human and mammalian HBV | dense |
+| Bat and non-human primate orthohepadnaviruses | moderate |
+| Avihepadnaviruses | reference-level |
+| Fish hepadnaviruses | sparse, reference + assembly-derived |
+| Amphibian herpetohepadnaviruses | sparse, reference-level |
+| Reptile herpetohepadnaviruses | limited / assembly-derived / unresolved |
+
+Absence of reptile exogenous genomes is a dataset limitation, not something to
+fill with simulated data. `Hepadnaviridae-GLUE`
+(https://github.com/giffordlabcvr/Hepadnaviridae-GLUE) is the recommended
+family-wide companion: pin it to a commit and use its reference set, alignments
+and feature coordinates as the deep-dataset backbone, then add WGS/TSA/SRA
+candidates from the literature separately.
 
 **Why this resolves a different question:** the deep alignment separates
 features that belong to modern human HBV from those that have survived hundreds
@@ -92,12 +170,15 @@ nackednaviruses — a claim the deep alignment exists to test residue by residue
 
 HBV is circular and databases emit arbitrary rotations. All genomes are recut at
 a common origin (`reference.origin_nt`, the EcoRI site = nt 1 in standard
-convention) before any coordinate is compared. Origin detection is on by default
-(`qc.detect_origin: true`) and anchored to the reference sequence written by the
-`reference` stage (`reference.sequence`); when the seed cannot be located it
-falls back to the configured constant. Detection is exact for arbitrarily
-rotated records; the fallback is exact only for standard-numbered ones. This is
-documented in `hbvpol/qc/circularise.py`.
+convention) before any coordinate is compared. With `qc.origin_method: auto`
+(default) the exact reference-origin seed is tried first (origin-anchored; the
+bulk of GenBank records are rotated), then the invariant **YMDD** motif
+(`hbvpol.calibrate.orient_to_reference`) for records whose origin k-mer is not
+conserved or which are reverse-oriented, then the configured constant. A small
+YMDD offset is arbitrated by ORF integrity, because one anchor cannot tell a
+rotation from an indel upstream of the motif. Per-record `origin_method` is
+recorded in the QC metadata, and `_lift` is the identity because the recut
+sequence *is* the reference frame. See `hbvpol/qc/circularise.py`.
 
 Reference-derived coordinates (see `hbvpol/reference.py` and
 [`methods.md`](methods.md)) supply the Pol/S/C spans and the surface-frame offset

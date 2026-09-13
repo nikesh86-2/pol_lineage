@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 from ..config import get
 from ..pipeline import StageError, get_logger, stage_dir
+from .crosscheck import run_crosscheck, write_crosscheck
 from .deephep import run as run_deephep
 from .glue import fetch_glue_alignments
 from .hbvdb import check_release_freshness, fetch_hbvdb
@@ -27,6 +28,7 @@ ARTEFACT_NAMES: tuple[str, ...] = (
     "hbv_metadata",
     "hbvdb_genomes",
     "hbvdb_metadata",
+    "crosscheck_status",
     "deephep_pol",
     "deephep_alignment",
 )
@@ -110,6 +112,22 @@ def run(config: Mapping[str, Any], root: str | Path) -> dict[str, Path]:
             logger.warning("HBV-GLUE integration unavailable: %s", exc)
     else:
         summary["glue"] = "disabled"
+
+    # --- provenance-aware cross-check (never blocks) --------------------------
+    if bool(get(config, "datasets.crosscheck.enabled", True)):
+        try:
+            payload = run_crosscheck(config, root, artefacts.get("hbv_genomes"), artefacts)
+            crosscheck_path = write_crosscheck(payload, stage / "crosscheck_status.json")
+            artefacts["crosscheck_status"] = crosscheck_path
+            summary["crosscheck_status"] = payload["crosscheck_status"]
+            summary["hbvdb_status"] = payload["hbvdb_status"]
+            logger.info(
+                "cross-check: %s (hbvdb=%s, glue=%s)",
+                payload["crosscheck_status"], payload["hbvdb_status"], payload["hbv_glue_status"],
+            )
+        except Exception as exc:  # noqa: BLE001 - validation must never block
+            summary["crosscheck_status"] = f"unavailable ({exc})"
+            logger.warning("cross-check unavailable: %s", exc)
 
     # --- deep hepadnavirus / nackednavirus Pol --------------------------------
     try:

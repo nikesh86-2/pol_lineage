@@ -55,6 +55,20 @@ datasets:
       # Link reads from the same patient_id sampled on different dates.
       enabled: true
       min_timepoints: 2
+  # Provenance-aware cross-validation. GenBank is the sequence-of-record;
+  # specialist resources are validation layers, never dependencies. An
+  # unavailable source is recorded as a status (matched | conflict | not_found |
+  # not_attempted | service_unavailable | not_applicable) in
+  # datasets/crosscheck_status.json, not treated as an invalid record.
+  crosscheck:
+    enabled: true
+    max_records: 500                 # bound the local translation/motif checks
+    pol_orf_stop_free_frac: 0.95     # local criterion for a complete Pol ORF
+    ymdd_motif_frac: 0.95            # local criterion for motif coherence
+    hbvdb_snapshot: external/hbvdb_snapshot          # checksummed legacy snapshot
+    hbv_glue_path: external/HBV-GLUE                 # pinned git clone
+    hepadnaviridae_glue_path: external/Hepadnaviridae-GLUE
+    stanford_catalogue: resources/hbv_pol_resistance.tsv
 
 # -----------------------------------------------------------------------------
 # Stage 1b — Deep hepadnavirus / nackednavirus Pol alignment
@@ -68,6 +82,11 @@ deephep:
     - reptile
     - amphibian
     - fish
+  # Version-controlled curated references (accession, genus, host class,
+  # provenance category, inclusion flags). Database queries discover
+  # candidates; this manifest controls the publication dataset. It supplies the
+  # amphibian/reptile/fish references that taxon-only queries miss.
+  references_file: config/deep_hepadnavirus_references.tsv
   include_nackednavirus: true          # fish nackednaviruses (defensible orthologs)
   include_rt_outgroups: true           # carefully chosen RT-family outgroups
   outgroups:
@@ -83,8 +102,9 @@ deephep:
   # Per-group Pol-restriction suffix; an empty string disables it.
   # group_query_suffixes:
   #   nackednavirus: "AND (polymerase[Title] OR P[Title] OR ORF2[Title])"
-  # Reptile and amphibian hepadnaviruses have no NCBI protein records, so those
-  # groups legitimately return zero (see docs/datasets.md).
+  # Reptile and amphibian hepadnaviruses are absent from the protein database,
+  # so those group queries return zero; the curated references_file above
+  # supplies them (see docs/datasets.md).
   max_per_group: 500
   fetch_batch_size: 200
   min_pol_length: 500

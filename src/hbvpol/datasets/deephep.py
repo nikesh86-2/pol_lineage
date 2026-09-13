@@ -35,6 +35,9 @@ __all__ = [
     "run",
     "build_deephep_dataset",
     "fetch_group_sequences",
+    "fetch_manifest_sequences",
+    "load_reference_manifest",
+    "manifest_provenance",
     "probe_group_queries",
     "filter_by_length",
     "align_sequences",
@@ -206,6 +209,205 @@ def fetch_group_sequences(group: str, config: Mapping[str, Any]) -> list[GenomeR
 
 
 # --------------------------------------------------------------------------- #
+# curated deep-reference manifest (version-controlled)
+# --------------------------------------------------------------------------- #
+
+#: Columns of ``config/deep_hepadnavirus_references.tsv``.
+REFERENCE_MANIFEST_COLUMNS = (
+    "accession", "display_name", "genus", "host_class", "host_species",
+    "sequence_origin", "expected_complete", "include_pol_tree",
+    "include_codon_analysis", "include_structure_analysis",
+    "source_publication", "notes",
+)
+
+#: Honest provenance categories.  Endogenous elements and assembly-derived
+#: candidates must never be pooled silently with extant viral genomes.
+SEQUENCE_ORIGINS = (
+    "exogenous_complete",
+    "exogenous_partial",
+    "assembly_derived_complete",
+    "assembly_derived_partial",
+    "endogenous_complete_or_near_complete",
+    "endogenous_fragment",
+    "metagenomic_unverified",
+)
+
+_TRUTHY = {"yes", "true", "1", "y"}
+_TRUTHY_CONDITIONAL = _TRUTHY | {"conditional"}
+
+
+def load_reference_manifest(path: str | Path) -> list[dict[str, str]]:
+    """Parse the curated deep-reference manifest TSV into rows.
+
+    The manifest is the publication dataset: database queries discover
+    candidates, but only rows here are guaranteed to be retrieved.  Blank
+    accessions are skipped; unknown columns are preserved.
+    """
+    import csv
+
+    manifest_path = Path(path)
+    if not manifest_path.exists():
+        return []
+    rows: list[dict[str, str]] = []
+    with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            accession = str(row.get("accession", "") or "").strip()
+            if not accession:
+                continue
+            rows.append({str(key): str(value or "").strip() for key, value in row.items()})
+    return rows
+
+
+def _flag(value: str, conditional: bool = False) -> bool:
+    allowed = _TRUTHY_CONDITIONAL if conditional else _TRUTHY
+    return str(value).strip().lower() in allowed
+
+
+def _pol_from_genbank(record: Any, entry: Mapping[str, str]) -> str | None:
+    """Extract the Pol protein from an annotated GenBank record.
+
+    Prefers the deposited ``translation`` qualifier (exact); otherwise
+    translates the CDS location.  Returns ``None`` when no polymerase CDS is
+    found, so the caller can warn rather than guess.
+    """
+    from ..domain import translate
+
+    for feature in getattr(record, "features", []):
+        if getattr(feature, "type", None) != "CDS":
+            continue
+        quals = feature.qualifiers
+        gene = " ".join(quals.get("gene", [])).lower()
+        product = " ".join(quals.get("product", [])).lower()
+        looks_like_pol = (
+            "polymerase" in product
+            or "reverse transcriptase" in product
+            or gene.strip() in {"pol", "p", "polymerase"}
+        )
+        if not looks_like_pol:
+            continue
+        translation = (quals.get("translation") or [""])[0]
+        if translation:
+            return str(translation).upper()
+        try:
+            nt = str(feature.extract(record.seq)).upper()
+        except Exception:  # pragma: no cover - malformed location
+            continue
+        protein = translate(nt, frame=0).rstrip("*")
+        if protein:
+            return protein
+    return None
+
+
+def fetch_manifest_sequences(config: Mapping[str, Any]) -> list[GenomeRecord]:
+    """Retrieve Pol proteins for the curated reference manifest.
+
+    Each accession is fetched as a GenBank nucleotide record and its polymerase
+    CDS is extracted.  Per-accession failures are logged and skipped, so a single
+    stale accession cannot abort the deep dataset.
+    """
+    from Bio import Entrez, SeqIO  # lazy: no network at import time
+
+    logger = get_logger("datasets.deephep")
+    manifest_path = get(config, "deephep.references_file")
+    if not manifest_path:
+        return []
+    entries = load_reference_manifest(str(manifest_path))
+    if not entries:
+        logger.warning("deephep: reference manifest %s is empty or missing", manifest_path)
+        return []
+
+    email = get(config, "datasets.hbv.genbank.email") or get(config, "deephep.email")
+    if not email:
+        raise StageError(
+            "the deep-reference manifest requires datasets.hbv.genbank.email "
+            "(or deephep.email) for NCBI E-utilities"
+        )
+    Entrez.email = str(email)
+    Entrez.tool = "hbvpol"
+    api_key = get(config, "datasets.hbv.genbank.api_key")
+    if api_key:
+        Entrez.api_key = str(api_key)
+
+    records: list[GenomeRecord] = []
+    for entry in entries:
+        if not _flag(entry.get("include_pol_tree", ""), conditional=True):
+            continue
+        accession = entry["accession"]
+        try:
+            with Entrez.efetch(db="nucleotide", id=accession, rettype="gb", retmode="text") as handle:
+                record = SeqIO.read(handle, "genbank")
+        except Exception as exc:  # noqa: BLE001 - per-accession resilience
+            logger.warning("deephep: manifest accession %s could not be fetched (%s)", accession, exc)
+            continue
+        protein = _pol_from_genbank(record, entry)
+        if not protein:
+            logger.warning("deephep: no polymerase CDS found for manifest accession %s", accession)
+            continue
+        records.append(
+            GenomeRecord(
+                id=accession,
+                seq=protein,
+                description=entry.get("display_name", ""),
+                source="deephep:reference_manifest",
+                metadata={
+                    "group": "reference_manifest",
+                    "accession": accession,
+                    "display_name": entry.get("display_name", ""),
+                    "genus": entry.get("genus", ""),
+                    "host_class": entry.get("host_class", ""),
+                    "host_species": entry.get("host_species", ""),
+                    "sequence_origin": entry.get("sequence_origin", ""),
+                    "include_codon_analysis": entry.get("include_codon_analysis", ""),
+                    "include_structure_analysis": entry.get("include_structure_analysis", ""),
+                    "source_publication": entry.get("source_publication", ""),
+                },
+            )
+        )
+    logger.info("deephep: reference manifest -> %d Pol sequences", len(records))
+    return records
+
+
+def manifest_provenance(records: Iterable[GenomeRecord]) -> list[dict[str, str]]:
+    """Tidy provenance rows for manifest-sourced records (the audit table)."""
+    rows: list[dict[str, str]] = []
+    for record in records:
+        metadata = dict(record.metadata or {})
+        if metadata.get("group") != "reference_manifest":
+            continue
+        rows.append({
+            "accession": metadata.get("accession", record.id),
+            "display_name": metadata.get("display_name", ""),
+            "genus": metadata.get("genus", ""),
+            "host_class": metadata.get("host_class", ""),
+            "host_species": metadata.get("host_species", ""),
+            "sequence_origin": metadata.get("sequence_origin", ""),
+            "length": str(len(record.seq)),
+            "source_publication": metadata.get("source_publication", ""),
+            "include_codon_analysis": metadata.get("include_codon_analysis", ""),
+            "include_structure_analysis": metadata.get("include_structure_analysis", ""),
+        })
+    return rows
+
+
+def _write_provenance(path: Path, records: Iterable[GenomeRecord]) -> None:
+    """Write the manifest provenance audit table (TSV)."""
+    import csv
+
+    columns = [
+        "accession", "display_name", "genus", "host_class", "host_species",
+        "sequence_origin", "length", "source_publication",
+        "include_codon_analysis", "include_structure_analysis",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(columns)
+        for row in manifest_provenance(records):
+            writer.writerow([row.get(column, "") for column in columns])
+
+
+# --------------------------------------------------------------------------- #
 # alignment / trimming
 # --------------------------------------------------------------------------- #
 
@@ -373,6 +575,18 @@ def build_deephep_dataset(
         counts[term] = len(group_records)
         collected.extend(group_records)
 
+    # Curated, version-controlled references: database queries discover
+    # candidates, but the manifest controls the publication dataset.
+    manifest_records: list[GenomeRecord] = []
+    if get(config, "deephep.references_file"):
+        try:
+            manifest_records = fetch_manifest_sequences(config)
+        except Exception as exc:  # noqa: BLE001 - optional source
+            logger.warning("deephep: reference manifest unavailable (%s)", exc)
+            manifest_records = []
+        counts["reference_manifest"] = len(manifest_records)
+        collected.extend(manifest_records)
+
     unique = _dedupe(collected)
     min_length = int(get(config, "deephep.min_pol_length", 0) or 0)
     max_length = int(get(config, "deephep.max_pol_length", 10**9) or 10**9)
@@ -387,14 +601,23 @@ def build_deephep_dataset(
     )
 
     write_fasta(filtered, out_fasta)
+
+    provenance_path = out_fasta.parent / "deephep_provenance.tsv"
+    _write_provenance(provenance_path, manifest_records)
+    result = {
+        "deephep_pol": out_fasta,
+        "deephep_provenance": provenance_path,
+    }
     if not filtered:
         out_alignment.parent.mkdir(parents=True, exist_ok=True)
         out_alignment.write_text("", encoding="utf-8")
-        return {"deephep_pol": out_fasta, "deephep_alignment": out_alignment}
+        result["deephep_alignment"] = out_alignment
+        return result
 
     aligned = align_sequences(out_fasta, out_alignment, config)
     aligned = maybe_trim_alignment(aligned, config)
-    return {"deephep_pol": out_fasta, "deephep_alignment": aligned}
+    result["deephep_alignment"] = aligned
+    return result
 
 
 def run(config: Mapping[str, Any], root: str | Path) -> dict[str, Path]:

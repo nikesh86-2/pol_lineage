@@ -7,6 +7,7 @@ atlas can be rebuilt from whatever subset of upstream files exists.
 ```
 output/
   datasets/     hbv_genomes.fasta  hbv_metadata.tsv  deephep_pol.fasta  deephep_alignment.fasta
+                crosscheck_status.json  deephep_provenance.tsv
   reference/    reference.fasta  reference.gb  reference_features.json
   qc/           hbv_oriented.fasta  hbv_qc_pass.tsv  hbv_qc_fail.tsv
   recombination/ breakpoints.tsv  blocks.tsv  block_alns/block_<id>.fasta

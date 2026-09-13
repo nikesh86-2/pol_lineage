@@ -1,0 +1,9 @@
+accession	display_name	genus	host_class	host_species	sequence_origin	expected_complete	include_pol_tree	include_codon_analysis	include_structure_analysis	source_publication	notes
+NC_003977	Human hepatitis B virus	Orthohepadnavirus	Mammalia	Homo sapiens	exogenous_complete	yes	yes	yes	yes	NCBI RefSeq	human reference; control for the deep alignment
+NC_004107	Woodchuck hepatitis virus	Orthohepadnavirus	Mammalia	Marmota monax	exogenous_complete	yes	yes	yes	yes	NCBI RefSeq	rodent orthohepadnavirus reference
+NC_001484	Ground squirrel hepatitis virus	Orthohepadnavirus	Mammalia	Urocitellus parryii	exogenous_complete	yes	yes	yes	yes	NCBI RefSeq	rodent orthohepadnavirus reference
+NC_001344	Duck hepatitis B virus	Avihepadnavirus	Aves	Anas platyrhynchos	exogenous_complete	yes	yes	yes	yes	NCBI RefSeq	avian reference
+NC_001486	Heron hepatitis B virus	Avihepadnavirus	Aves	Ardea cinerea	exogenous_complete	yes	yes	yes	yes	NCBI RefSeq	avian reference
+NC_030446	Tibetan frog hepatitis B virus	Herpetohepadnavirus	Amphibia	Nanorana parkeri	exogenous_complete	yes	yes	conditional	yes	Dill et al. 2016	first amphibian hepadnavirus (in silico discovery)
+NC_027922	White sucker hepatitis B virus	Parahepadnavirus	Actinopterygii	Catostomus commersonii	exogenous_complete	yes	yes	conditional	yes	Dill et al. 2016	fish parahepadnavirus
+NC_030445	Bluegill hepatitis B virus	Metahepadnavirus	Actinopterygii	Lepomis macrochirus	exogenous_complete	yes	yes	conditional	yes	Dill et al. 2016	fish metahepadnavirus
