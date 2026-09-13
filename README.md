@@ -186,14 +186,20 @@ documented simplifications you should replace for a publication run:
 * **Reference coordinates and the surface-frame offset** are derived by the
   `reference` stage from the annotated reference and merged into `reference`, so
   they are no longer assumed. Pol domain boundaries resolve through
-  `reference.domain_spans_file` (per-genotype rows) and are clamped to the
-  derived Pol length; calibrate them by alignment with
-  `scripts/locate_pol_domains.py`. The shipped fallbacks remain approximate.
+  `reference.domain_spans_file` (per-genotype rows, calibrated for A–J) and are
+  clamped to the derived Pol length; calibrate them by alignment with
+  `scripts/locate_pol_domains.py`.
+* **Reference-frame positions** are mapped explicitly
+  (`hbvpol.coordinates.reference_positions`): the reference genome is aligned to
+  a representative row of the MSA, and selection/domain slicing select codons by
+  that map. Gapped alignments and genotype indels therefore no longer shift
+  downstream positions. Selection reads `recombination/hbv_aligned.fasta`;
+  without a reference sequence it falls back to index arithmetic with a warning.
 * **Circularisation** uses reference-anchored origin detection
   (`qc.detect_origin`, on by default) and falls back to the configured origin
   when the reference seed is absent.
-* **ε coordinates** are resolved per genotype through `epsilon.spans_file`; the
-  shipped table carries a documented `default` row to curate.
+* **ε coordinates** are resolved per genotype through `epsilon.spans_file`;
+  calibrated for A–J (all 1846–1905 in the reference frame).
 * **Offline fallbacks** (Neighbor-Joining, Fitch parsimony, Nussinov folding,
   pure-Python bootscan, APC-corrected MI) exist so the pipeline is testable with
   no external tools. Set `project.required_tools` to make their absence a hard

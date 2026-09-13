@@ -102,6 +102,11 @@ method. Set it to `false` to scan nucleotide columns instead. For tens of
 thousands of sequences, replace the APC-corrected-MI proxy with a vectorised or
 external DCA backend (`dca_impl`).
 
+All position columns in this stage are **reference-frame** coordinates, derived
+from the column map (see *Reference-frame coordinates* below), so a genotype's
+inserted residues are retained in domain sub-alignments but do not shift the
+numbering of anything downstream.
+
 ---
 
 ## Stage 4 — A structural ensemble, not one static model
@@ -268,12 +273,31 @@ threshold, so a wrong accession or orientation is visible rather than silently
 mis-calibrated.  Genotype references are pinned in
 `resources/genotype_references/` so the calibration is reproducible offline.
 
-> **Current limit.** The Pol domain sub-alignments are extracted with a single
-> span set (the `default`/reference row), because one concatenated sub-alignment
-> cannot carry different per-sequence coordinates. Once calibrated genotype rows
-> exist, per-genotype extraction (split by genotype, then slice) is the natural
-> next step. `domain_spans_from_config(config, genotype=...)` already resolves
-> the right row for callers that know the genotype.
+### Reference-frame coordinates (`hbvpol.coordinates`)
+
+Every position the pipeline reports is in the **reference genome's numbering**
+(like clinical rt numbering). That is only well-defined when alignment columns
+can be mapped to reference positions, and neither raw records nor a gapped MSA
+satisfy "column *i* == reference position *i + 1*".
+
+`hbvpol.coordinates.reference_positions` aligns the configured reference genome
+to a representative row of the alignment once and returns a per-column
+reference position (`None` for insertions). `extract_domain_subalignments` and
+the selection stage (entropy, dual-frame, genotype specificity, translated Pol
+for DCA) select codons and label positions through that map, so:
+
+* gapped alignments no longer shift downstream slices;
+* a genotype insertion internal to a domain is retained in that domain's
+  sub-alignment (via its nearest anchored neighbour) but has **no numbered
+  position**, which is the standard reference-frame convention (e.g. rt
+  numbering), rather than being excluded or mis-numbered;
+* calibrated genotype rows (A 845 aa, B/C/F 843, E/G 842, …) are genotype-frame
+  and are therefore *not* applied to reference-frame tables — the map handles
+  genotype indels, and the reference `default` spans are the correct labels.
+
+Selection reads the aligned MSA (`recombination/hbv_aligned.fasta`) so the map
+applies; the raw oriented FASTA remains the documented fallback when no
+alignment exists (e.g. the offline tests).
 
 ### Wiring the reference (`hbvpol.reference`)
 

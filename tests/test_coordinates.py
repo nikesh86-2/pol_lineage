@@ -144,3 +144,81 @@ def test_reference_sequence_from_config_reads_path(tmp_path):
     reference = _random_nt(40, seed=6)
     config = _reference_config(tmp_path, reference)
     assert reference_sequence_from_config(config) == reference
+
+
+# --------------------------------------------------------------------------- #
+# selection statistics in the reference frame
+# --------------------------------------------------------------------------- #
+def _gapped_records(reference: str):
+    """ref / SNP / insertion MSA over a 60-nt reference."""
+    snp_base = "A" if reference[44] != "A" else "C"
+    snp_reference = reference[:44] + snp_base + reference[45:]
+    return [
+        GenomeRecord(id="ref", seq=reference[:20] + "---" + reference[20:]),
+        GenomeRecord(id="snp", seq=snp_reference[:20] + "---" + snp_reference[20:]),
+        GenomeRecord(id="ins", seq=reference[:20] + "AAA" + reference[20:]),
+    ]
+
+
+def _selection_config(tmp_path, reference: str) -> dict:
+    return _reference_config(
+        tmp_path,
+        reference,
+        accession="ref",
+        pol_start_nt=1,
+        pol_end_nt=60,
+        pol_length_aa=20,
+        surface_frame_offset=1,
+        domain_spans=[
+            {"domain": "TP", "start": 1, "end": 10},
+            {"domain": "spacer", "start": 11, "end": 20},
+        ],
+    )
+
+
+def test_translate_pol_alignment_uses_reference_frame(tmp_path):
+    from hbvpol.domain import translate
+    from hbvpol.selection.dualframe import translate_pol_alignment
+
+    reference = _random_nt(60, seed=7)
+    records = _gapped_records(reference)
+    config = _selection_config(tmp_path, reference)
+    positions = reference_positions(records, config)
+
+    translated = {r.id: r.seq for r in translate_pol_alignment(records, config, positions, 60)}
+    expected = translate(reference)
+    assert len(expected) == 20
+    # The insertion is excluded from the reference frame, so "ins" matches ref.
+    assert translated["ins"] == expected
+    assert translated["ref"] == expected
+    assert len(translated["ref"]) == 20
+
+
+def test_per_position_entropy_positions_are_reference_frame(tmp_path):
+    from hbvpol.selection.entropy import per_position_entropy
+
+    reference = _random_nt(60, seed=8)
+    records = _gapped_records(reference)
+    config = _selection_config(tmp_path, reference)
+    config["selection"] = {"window": 1}
+    positions = reference_positions(records, config)
+
+    frame = per_position_entropy(records, config, positions, 60)
+    assert list(frame["pol_position"]) == list(range(1, 21))
+    assert frame["domain"].iloc[0] == "TP"
+    assert frame["domain"].iloc[-1] == "spacer"
+
+
+def test_dual_frame_uses_reference_nucleotide_positions(tmp_path):
+    from hbvpol.selection.dualframe import dual_frame_table
+
+    reference = _random_nt(60, seed=9)
+    records = _gapped_records(reference)
+    config = _selection_config(tmp_path, reference)
+    positions = reference_positions(records, config)
+
+    frame = dual_frame_table(records, config, positions, 60)
+    assert not frame.empty
+    # The single SNP sits at reference position 45 (column 48 in the gapped MSA).
+    assert set(frame["nucleotide_position"]) == {45}
+    assert set(frame["pol_codon_position"]) == {15}

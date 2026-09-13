@@ -30,6 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..config import get
+from ..coordinates import reference_positions, reference_sequence_from_config
 from ..io import GenomeRecord, read_fasta, read_table, write_table
 from ..pipeline import get_logger, have_executable, output_dir, run_command, stage_dir
 from .covariation import COVARIATION_COLUMNS, EPISTASIS_COLUMNS, covarying_pairs, epistasis_pairs
@@ -49,6 +50,10 @@ _LINEAGE_COLUMN_CANDIDATES = ("genotype", "genotype_group", "lineage")
 _ID_COLUMN_CANDIDATES = ("accession", "isolate", "id", "sequence_id", "name", "strain", "seq_id")
 
 _FALLBACK_ALIGNMENTS = (
+    # Prefer the aligned MSA: only it carries the gap columns the reference
+    # column map needs, and it is the correct substrate for position-based
+    # statistics.  Raw oriented records are the (documented) fallback.
+    ("recombination", "hbv_aligned.fasta"),
     ("qc", "hbv_oriented.fasta"),
     ("datasets", "hbv_genomes.fasta"),
     ("datasets", "deephep_alignment.fasta"),
@@ -257,6 +262,22 @@ def run(config: dict, root) -> dict[str, Path]:
     subsets = _subset_by_lineage(records, metadata, lineages)
     tree = _find_tree(outroot)
 
+    # A single column -> reference-position map for the whole run, so every
+    # lineage and every table shares the same reference-frame coordinates.
+    reference = reference_sequence_from_config(config)
+    positions = reference_positions(records, config) if records else None
+    if reference:
+        genome_length = len(reference)
+    elif records:
+        genome_length = max(len(record.seq) for record in records)
+    else:
+        genome_length = 0
+    if positions is None:
+        logger.warning(
+            "no reference sequence configured; selection positions use reference-index "
+            "arithmetic and will drift for indel-bearing genotypes"
+        )
+
     methods = get(config, "selection.methods", []) or []
     if isinstance(methods, str):
         methods = [methods]
@@ -270,16 +291,24 @@ def run(config: dict, root) -> dict[str, Path]:
     for lineage in lineages:
         subset = subsets.get(lineage, [])
         entropy_frames.append(
-            _with_lineage(per_position_entropy(subset, config), lineage, ENTROPY_COLUMNS)
+            _with_lineage(
+                per_position_entropy(subset, config, positions, genome_length),
+                lineage,
+                ENTROPY_COLUMNS,
+            )
         )
         dual_frames.append(
-            _with_lineage(dual_frame_table(subset, config), lineage, DUAL_FRAME_COLUMNS)
+            _with_lineage(
+                dual_frame_table(subset, config, positions, genome_length),
+                lineage,
+                DUAL_FRAME_COLUMNS,
+            )
         )
         # DCA/covariation are protein methods: run them on the translated Pol
         # alignment so positions are Pol residues (matching entropy, genotype
         # specificity and the atlas), not nucleotide columns.
         if bool(get(config, "selection.protein_covariation", True)):
-            covariance_input = translate_pol_alignment(subset, config)
+            covariance_input = translate_pol_alignment(subset, config, positions, genome_length)
         else:
             covariance_input = subset
         covariation_frames.append(
@@ -300,7 +329,7 @@ def run(config: dict, root) -> dict[str, Path]:
     covariation = _concat(covariation_frames, COVARIATION_COLUMNS)
     epistasis = _concat(epistasis_frames, EPISTASIS_COLUMNS)
 
-    genotype = genotype_specificity(records, metadata, config)
+    genotype = genotype_specificity(records, metadata, config, positions, genome_length)
     if genotype is None or len(genotype) == 0:
         genotype = _empty(GENOTYPE_COLUMNS)
     else:

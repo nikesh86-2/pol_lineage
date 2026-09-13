@@ -24,8 +24,14 @@ from typing import Mapping
 import pandas as pd
 
 from ..config import get
-from ..domain import domain_of, translate
-from .dualframe import alignment_width, coerce_alignment, pol_codon_columns
+from ..domain import domain_of, domain_spans_from_config, translate
+from .dualframe import (
+    _codon_string,
+    alignment_width,
+    coerce_alignment,
+    codon_columns_from_positions,
+    pol_codon_columns,
+)
 
 __all__ = [
     "GENOTYPE_COLUMNS",
@@ -59,21 +65,28 @@ def _heterozygosity(counts: Counter) -> float:
     return 1.0 - sum((value / total) ** 2 for value in counts.values())
 
 
-def _domain_label(position: int) -> str:
+def _domain_label(position: int, spans=None) -> str:
     try:
-        return domain_of(position).value
+        return (domain_of(position, spans) if spans else domain_of(position)).value
     except ValueError:
         return ""
 
 
-def genotype_specificity(alignment, metadata, config: Mapping[str, object]) -> pd.DataFrame:
+def genotype_specificity(
+    alignment,
+    metadata,
+    config: Mapping[str, object],
+    positions=None,
+    genome_length: int | None = None,
+) -> pd.DataFrame:
     """Per-Pol-position Fst across genotype groups.
 
     ``metadata`` is a DataFrame with an id column (``accession``/``isolate``/…)
     and a ``genotype`` column.  Returns columns ``pol_position, domain, fst,
     genotype_informative``; an empty frame (correct schema) is returned when
     metadata is missing, genotypes are unknown, or fewer than two genotype
-    groups are available.
+    groups are available.  Passing the column -> reference-position ``positions``
+    map selects codons by reference coordinate.
     """
     records = coerce_alignment(alignment)
     if metadata is None or len(metadata) == 0 or not records:
@@ -100,9 +113,15 @@ def genotype_specificity(alignment, metadata, config: Mapping[str, object]) -> p
         return pd.DataFrame(columns=GENOTYPE_COLUMNS)
 
     width = alignment_width(records)
-    codon_columns = pol_codon_columns(config, width)
+    if positions is not None and genome_length:
+        codon_columns: list[list[int | None]] = codon_columns_from_positions(
+            positions, config, genome_length
+        )
+    else:
+        codon_columns = pol_codon_columns(config, width)
     min_fst = float(get(config, "selection.genotype_specificity.min_fst", 0.25) or 0.0)
     total_sequences = sum(len(seqs) for seqs in groups.values())
+    spans = domain_spans_from_config(config)
 
     rows: list[dict] = []
     for index, columns in enumerate(codon_columns):
@@ -112,7 +131,7 @@ def genotype_specificity(alignment, metadata, config: Mapping[str, object]) -> p
             counts: Counter = Counter()
             for sequence in sequences:
                 padded = sequence.ljust(width, "-")
-                codon = "".join(padded[column] if column < len(padded) else "-" for column in columns)
+                codon = _codon_string(padded, columns)
                 amino_acid = translate(codon, frame=0)
                 if amino_acid and amino_acid != "X":
                     counts[amino_acid] += 1
@@ -130,7 +149,7 @@ def genotype_specificity(alignment, metadata, config: Mapping[str, object]) -> p
         position = index + 1
         rows.append({
             "pol_position": position,
-            "domain": _domain_label(position),
+            "domain": _domain_label(position, spans),
             "fst": float(fst),
             "genotype_informative": bool(fst >= min_fst),
         })

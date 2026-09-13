@@ -32,6 +32,12 @@ Pol/S/C spans and the surface-frame offset. `qc/hbv_oriented.fasta` contains
 
 ## Key table schemas
 
+> **Coordinates.** Every `pol_position` and `nucleotide_position` is a 1-based
+> **reference-frame** coordinate (the reference genome's own numbering), derived
+> from the column map in `hbvpol.coordinates`. A genotype-specific insertion has
+> no numbered position — it is retained in `recombination/domain_subalns/` but
+> does not shift downstream numbering.
+
 | Table | Columns |
 |---|---|
 | `reference/reference_features.json` | `reference` (config subtree: `accession, length, origin_nt, pol_start_nt, pol_end_nt, pol_length_aa, s_start_nt, s_end_nt, c_start_nt, c_end_nt, surface_frame_offset, sequence`) and `features` (raw derived values) |

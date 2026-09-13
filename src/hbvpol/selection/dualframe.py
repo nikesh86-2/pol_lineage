@@ -54,6 +54,9 @@ __all__ = [
     "default_reference_sequence",
     "pol_codon_columns",
     "codon_bounds",
+    "codon_index_from_position",
+    "codon_columns_from_positions",
+    "reference_codon",
     "reference_nt_position",
     "classify_substitution",
     "dual_frame_table",
@@ -191,24 +194,118 @@ def codon_bounds(nt_index: int, frame_start: int, width: int) -> tuple[list[int]
     return columns, relative
 
 
-def translate_pol_alignment(alignment, config: Mapping[str, object]) -> list[GenomeRecord]:
+# --- reference-frame (column-mapped) codon arithmetic ----------------------- #
+#
+# When a gapped multiple alignment is used, alignment columns are not reference
+# positions, so the codon arithmetic above cannot be applied to a column index.
+# The helpers below work in **reference coordinates** and are paired with the
+# column -> reference-position map from :mod:`hbvpol.coordinates`.
+
+
+def codon_index_from_position(position: int, frame_start: int, genome_length: int) -> int:
+    """1-based codon index (residue number) of a reference nucleotide position."""
+    if genome_length <= 0:
+        return 1
+    return ((position - frame_start) % genome_length) // 3 + 1
+
+
+def reference_codon(
+    position: int, frame_start: int, genome_length: int
+) -> tuple[int, int, list[int]]:
+    """Reference positions of the codon containing ``position`` in a frame.
+
+    Returns ``(codon_start_position, within_codon_offset, [positions])`` where
+    the three positions wrap the origin.  Mirrors :func:`codon_bounds` but in
+    reference coordinates rather than alignment columns.
+    """
+    if genome_length <= 0:
+        return position, 0, [position, position, position]
+    relative = (position - frame_start) % 3
+    start = ((position - 1 - relative) % genome_length) + 1
+    positions = [((start - 1 + k) % genome_length) + 1 for k in range(3)]
+    return start, relative, positions
+
+
+def _position_to_column(positions) -> dict[int, int]:
+    """First column holding each reference position (deterministic)."""
+    mapping: dict[int, int] = {}
+    for column, position in enumerate(positions):
+        if position is not None and position not in mapping:
+            mapping[position] = column
+    return mapping
+
+
+def codon_columns_from_positions(
+    positions, config: Mapping[str, object], genome_length: int
+) -> list[list[int | None]]:
+    """Pol codon columns in reference order, with ``None`` for missing positions.
+
+    One entry per Pol codon (``reference.pol_start_nt`` -> ``pol_end_nt``), each
+    a three-element list of alignment column indices.  A position that the
+    column map does not cover (e.g. deleted in the representative) yields
+    ``None`` so the codon translates to a gap rather than shifting the frame.
+    """
+    if genome_length <= 0:
+        return []
+    position_to_column = _position_to_column(positions)
+    pol_start = _pol_start(config)
+    pol_end = get(config, "reference.pol_end_nt", None)
+    try:
+        pol_end = int(pol_end) if pol_end is not None else None
+    except (TypeError, ValueError):
+        pol_end = None
+    if pol_end is not None:
+        length_nt = (pol_end - pol_start) % genome_length + 1
+    else:
+        length_nt = genome_length - pol_start + 1
+    n_codons = max(0, length_nt // 3)
+    codons: list[list[int | None]] = []
+    for index in range(n_codons):
+        start = ((pol_start - 1 + 3 * index) % genome_length) + 1
+        codons.append(
+            [position_to_column.get(((start - 1 + k) % genome_length) + 1) for k in range(3)]
+        )
+    return codons
+
+
+def _codon_string(sequence: str, columns: list[int | None]) -> str:
+    """Bases at the given columns, or ``-`` for absent (``None``) columns."""
+    return "".join(
+        sequence[column] if column is not None and column < len(sequence) else "-"
+        for column in columns
+    )
+
+
+def translate_pol_alignment(
+    alignment,
+    config: Mapping[str, object],
+    positions=None,
+    genome_length: int | None = None,
+) -> list[GenomeRecord]:
     """Translate a nucleotide alignment into a Pol **protein** alignment.
 
-    One output character per Pol codon (see :func:`pol_codon_columns`), so
-    output position *i* corresponds to Pol amino acid *i* -- which is the
-    coordinate the atlas and the selection tables use.  Codons containing a gap
-    or an ambiguous base become ``-`` so that DCA/covariation see an aligned
-    protein alignment rather than codon-level noise.
+    One output character per Pol codon, so output position *i* corresponds to
+    Pol amino acid *i* -- the coordinate the atlas and the selection tables use.
+    Codons containing a gap or an ambiguous base become ``-`` so that
+    DCA/covariation see an aligned protein alignment rather than codon-level
+    noise.
 
-    This is the correct input for DCA, which is conventionally a protein
-    method; running it on nucleotide columns mixes reading frames and reports
-    nucleotide positions that the rest of the pipeline interprets as residues.
+    Passing the column -> reference-position ``positions`` map (from
+    :func:`hbvpol.coordinates.reference_positions`) selects codons by reference
+    coordinate, which is what makes the translation correct on a gapped
+    alignment and for genotypes with indels.  Without it the historical
+    reference-index arithmetic is used.
     """
     records = coerce_alignment(alignment)
     if not records:
         return []
     width = alignment_width(records)
-    codon_columns = pol_codon_columns(config, width)
+    if positions is not None and genome_length:
+        codon_columns: list[list[int | None]] = codon_columns_from_positions(
+            positions, config, genome_length
+        )
+    else:
+        codon_columns = pol_codon_columns(config, width)
     if not codon_columns:
         return []
 
@@ -217,7 +314,7 @@ def translate_pol_alignment(alignment, config: Mapping[str, object]) -> list[Gen
         seq = record.seq.upper().ljust(width, "-")
         chars: list[str] = []
         for columns in codon_columns:
-            codon = "".join(seq[index] if index < len(seq) else "-" for index in columns)
+            codon = _codon_string(seq, columns)
             if any(base not in _ACGT for base in codon):
                 chars.append("-")
                 continue
@@ -298,13 +395,100 @@ def classify_substitution(
     }
 
 
-def _substitute(codon_columns: list[int], reference: str, relative: int, alt_nt: str) -> str:
-    bases = [reference[column] if column < len(reference) else "-" for column in codon_columns]
+def _substitute(codon_columns: list[int | None], reference: str, relative: int, alt_nt: str) -> str:
+    bases = [
+        reference[column] if column is not None and column < len(reference) else "-"
+        for column in codon_columns
+    ]
     bases[relative] = alt_nt
     return "".join(bases)
 
 
-def dual_frame_table(alignment, config: Mapping[str, object]) -> pd.DataFrame:
+def _position_in_frame_range(
+    position: int, start_nt: int, end_nt: int | None, genome_length: int
+) -> bool:
+    """True when ``position`` falls in a (possibly wrapping) reference range."""
+    if end_nt is None:
+        return position >= start_nt
+    start = ((start_nt - 1) % genome_length) + 1
+    end = ((end_nt - 1) % genome_length) + 1
+    if start <= end:
+        return start <= position <= end
+    return position >= start or position <= end
+
+
+def _dual_frame_table_mapped(
+    records,
+    sequences,
+    reference: str,
+    positions,
+    genome_length: int,
+    config: Mapping[str, object],
+    output_columns: list[str],
+) -> pd.DataFrame:
+    """Dual-frame classification using reference coordinates (column-mapped)."""
+    pol_start = _pol_start(config)
+    offset = int(get(config, "reference.surface_frame_offset", 1) or 0)
+    surface_start = ((pol_start - 1 + offset) % genome_length) + 1
+    pol_end = get(config, "reference.pol_end_nt", None)
+    try:
+        pol_end = int(pol_end) if pol_end is not None else None
+    except (TypeError, ValueError):
+        pol_end = None
+    position_to_column = _position_to_column(positions)
+
+    rows: list[dict] = []
+    for column, position in enumerate(positions):
+        if position is None:
+            continue
+        if not _position_in_frame_range(position, pol_start, pol_end, genome_length):
+            continue
+        counts = Counter(seq[column] for seq in sequences if seq[column] in _ACGT)
+        if len(counts) < 2:
+            continue
+        ref_nt = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+        _, pol_relative, pol_positions = reference_codon(position, pol_start, genome_length)
+        _, surface_relative, surface_positions = reference_codon(
+            position, surface_start, genome_length
+        )
+        pol_columns = [position_to_column.get(p) for p in pol_positions]
+        surface_columns = [position_to_column.get(p) for p in surface_positions]
+        ref_codon_pol = _codon_string(reference, pol_columns)
+        ref_codon_surface = _codon_string(reference, surface_columns)
+        disrupts = _disrupts_rna(position, config)
+
+        for alt_nt in sorted(counts):
+            if alt_nt == ref_nt:
+                continue
+            result = classify_substitution(
+                ref_codon_pol,
+                _substitute(pol_columns, reference, pol_relative, alt_nt),
+                ref_codon_surface,
+                _substitute(surface_columns, reference, surface_relative, alt_nt),
+                disrupts_rna=disrupts,
+            )
+            rows.append({
+                "nucleotide_position": position,
+                "ref_nt": ref_nt,
+                "pol_codon_position": codon_index_from_position(position, pol_start, genome_length),
+                "pol_ref_aa": result["pol_ref_aa"],
+                "pol_alt_aa": result["pol_alt_aa"],
+                "surface_position": codon_index_from_position(position, surface_start, genome_length),
+                "surface_ref_aa": result["surface_ref_aa"],
+                "surface_alt_aa": result["surface_alt_aa"],
+                "consequence_class": result["consequence_class"],
+                "disrupts_rna": result["disrupts_rna"],
+            })
+    return pd.DataFrame(rows, columns=output_columns)
+
+
+def dual_frame_table(
+    alignment,
+    config: Mapping[str, object],
+    positions=None,
+    genome_length: int | None = None,
+) -> pd.DataFrame:
     """Classify every variable nucleotide site in both reading frames.
 
     For each alignment column with two or more unambiguous alleles, the
@@ -312,7 +496,10 @@ def dual_frame_table(alignment, config: Mapping[str, object]) -> pd.DataFrame:
     The returned frame uses :data:`DUAL_FRAME_COLUMNS` *without* the leading
     ``lineage`` column, which the pipeline adds when it iterates lineages.
 
-    Works offline on any multiple alignment of nucleotide sequences.
+    Passing the column -> reference-position ``positions`` map (and the reference
+    ``genome_length``) makes every reported position a reference coordinate and
+    handles gapped alignments/indels correctly; without it the historical
+    reference-index arithmetic is used.
     """
     records = coerce_alignment(alignment)
     output_columns = [column for column in DUAL_FRAME_COLUMNS if column != "lineage"]
@@ -323,10 +510,16 @@ def dual_frame_table(alignment, config: Mapping[str, object]) -> pd.DataFrame:
     if width == 0:
         return pd.DataFrame(columns=output_columns)
 
-    pol_start = _pol_start(config)
-    surface_start = surface_frame_start(config, width)
     reference = default_reference_sequence(records)
     sequences = [record.seq.upper().ljust(width, "-") for record in records]
+
+    if positions is not None and genome_length:
+        return _dual_frame_table_mapped(
+            records, sequences, reference, positions, genome_length, config, output_columns
+        )
+
+    pol_start = _pol_start(config)
+    surface_start = surface_frame_start(config, width)
 
     # Only columns inside the Pol ORF carry a meaningful Pol codon/amino acid;
     # classifying genome-wide sites would report Pol positions that do not exist.
@@ -345,12 +538,8 @@ def dual_frame_table(alignment, config: Mapping[str, object]) -> pd.DataFrame:
 
         pol_columns, pol_relative = codon_bounds(column, pol_start, width)
         surface_columns, surface_relative = codon_bounds(column, surface_start, width)
-        ref_codon_pol = "".join(
-            reference[index] if index < len(reference) else "-" for index in pol_columns
-        )
-        ref_codon_surface = "".join(
-            reference[index] if index < len(reference) else "-" for index in surface_columns
-        )
+        ref_codon_pol = _codon_string(reference, pol_columns)
+        ref_codon_surface = _codon_string(reference, surface_columns)
         reference_position = reference_nt_position(column, config, width)
         disrupts = _disrupts_rna(reference_position, config)
 
