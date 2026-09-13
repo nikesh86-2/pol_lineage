@@ -103,13 +103,16 @@ def check_orf(
 
 
 def _lift(record: GenomeRecord, position_nt: int, genome_length: int) -> int:
-    """Lift a native reference coordinate into the record's oriented frame."""
-    if genome_length <= 0:
-        return position_nt
-    shift = int(record.metadata.get("origin_shift", 0) or 0)
-    if shift == 0:
-        return position_nt
-    return ((position_nt - 1 - shift) % genome_length) + 1
+    """Lift a native reference coordinate into the record's oriented frame.
+
+    After :func:`hbvpol.qc.circularise.circularise_genomes` the record has been
+    recut (and, where needed, re-oriented) so that reference position 1 is at
+    oriented position 1 -- the oriented sequence *is* the reference frame.  The
+    mapping is therefore the identity; the ``origin_shift`` metadata is retained
+    for provenance only.  (The previous subtraction of ``origin_shift`` here
+    double-applied the rotation and misplaced every coordinate.)
+    """
+    return position_nt
 
 
 def check_genome(record: GenomeRecord, config) -> dict:

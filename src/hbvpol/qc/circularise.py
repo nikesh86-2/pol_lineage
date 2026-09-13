@@ -26,6 +26,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Iterable
 
+from ..calibrate import orient_to_reference
 from ..config import get
 from ..domain import reverse_complement
 from ..io import GenomeRecord, read_fasta, rotate_to_origin
@@ -83,16 +84,25 @@ def circularise_genomes(records: Iterable[GenomeRecord], config) -> list[GenomeR
     """Recut every record at the reference origin (``reference.origin_nt``).
 
     Each returned record is a copy whose ``metadata`` records the applied
-    ``origin_shift`` (0-based left rotation) and the ``origin_nt_used``.  Those
-    fields let later stages lift reference-numbered coordinates into the
-    oriented frame.  When ``qc.detect_origin`` is enabled and a reference
-    sequence is available, the origin is found with
-    :func:`find_origin_by_reference`; otherwise the configured constant is
-    used, as the contract specifies.
+    ``origin_shift`` (0-based left rotation), the ``origin_nt_used`` and the
+    ``origin_method`` that resolved it.  Three strategies are tried in order
+    when ``qc.detect_origin`` is on and a reference sequence is available:
+
+    1. ``qc.origin_method: ymdd`` (default) -- align the invariant YMDD catalytic
+       motif (which tolerates synonymous codon variants and detects the opposite
+       strand) with :func:`hbvpol.calibrate.orient_to_reference`.  This works for
+       every human genotype, unlike the exact-25-mer seed, and re-orients
+       reverse-complemented records such as V01460.  Its assumption is that no
+       indel separates the origin from the anchor motif (position 738 in the
+       reference), which holds across human genotypes.
+    2. the exact reference-origin k-mer seed (:func:`find_origin_by_reference`);
+    3. the configured constant (``reference.origin_nt``), which assumes the
+       record already uses the reference numbering.
     """
     configured_origin = int(get(config, "reference.origin_nt", 1) or 1)
     detect = bool(get(config, "qc.detect_origin", False))
     seed_len = int(get(config, "qc.origin_seed_len", 25) or 25)
+    method = str(get(config, "qc.origin_method", "ymdd") or "ymdd").strip().lower()
     ref_seq = _reference_sequence(config) if detect else None
 
     oriented: list[GenomeRecord] = []
@@ -103,19 +113,41 @@ def circularise_genomes(records: Iterable[GenomeRecord], config) -> list[GenomeR
             oriented.append(record)
             continue
 
-        origin: int | None = None
-        if ref_seq:
-            origin = find_origin_by_reference(seq, ref_seq, seed_len=seed_len)
-        if origin is None:
-            origin = ((configured_origin - 1) % length) + 1
+        oriented_seq: str | None = None
+        strand = str(record.strand)
+        shift = 0
+        origin = configured_origin
+        resolved_by = "constant"
 
-        rotated = rotate_to_origin(seq, origin)
-        shift = (origin - 1) % length
+        if ref_seq and method in {"ymdd", "auto"}:
+            anchored = orient_to_reference(seq, ref_seq)
+            if anchored is not None:
+                oriented_seq, detected_strand, shift = anchored
+                if detected_strand in {"-", "-1"}:
+                    strand = "+"
+                origin = shift + 1
+                resolved_by = "ymdd"
+
+        if oriented_seq is None and ref_seq:
+            found = find_origin_by_reference(seq, ref_seq, seed_len=seed_len)
+            if found is not None:
+                oriented_seq = rotate_to_origin(seq, found)
+                shift = (found - 1) % length
+                origin = found
+                resolved_by = "seed"
+
+        if oriented_seq is None:
+            origin = ((configured_origin - 1) % length) + 1
+            oriented_seq = rotate_to_origin(seq, origin)
+            shift = (origin - 1) % length
+            resolved_by = "constant"
+
         metadata = dict(record.metadata)
         metadata["origin_shift"] = shift
         metadata["origin_nt_used"] = origin
+        metadata["origin_method"] = resolved_by
         oriented.append(
-            replace(record, seq=rotated, metadata=metadata)
+            replace(record, seq=oriented_seq, strand=strand, metadata=metadata)
         )
     return oriented
 

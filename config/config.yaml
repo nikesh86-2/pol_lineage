@@ -145,9 +145,14 @@ qc:
   max_internal_stops: 0
   circularise: true                    # all genomes recut at reference origin
   # Detect the origin per record by matching the reference (needs
-  # reference.sequence, supplied by the reference stage).  Conservative: it
-  # falls back to reference.origin_nt when the seed cannot be located.
+  # reference.sequence, supplied by the reference stage).  With
+  # origin_method: ymdd (default) the invariant YMDD motif anchors the rotation
+  # and detects reverse-complemented records; this works for every human
+  # genotype, unlike the exact-25-mer seed.  Falls back to the seed, then to
+  # reference.origin_nt.  Set origin_method: seed for the old behaviour.
   detect_origin: true
+  origin_method: ymdd
+  origin_seed_len: 25
   dereplicate: true
   dereplicate_identity: 0.9999
 

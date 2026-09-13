@@ -277,3 +277,68 @@ def test_qc_pipeline_run_writes_contract_artefacts(tmp_path):
     pass_table = read_table(artefacts["qc_pass"])
     assert list(pass_table["accession"]) == ["g1", "g2"]
     assert pass_table["qc_pass"].all()
+
+
+# --------------------------------------------------------------------------- #
+# YMDD-anchored origin normalisation
+# --------------------------------------------------------------------------- #
+def _reference_with_ymdd(tmp_path, seed=5):
+    sequence = _random_dna(300, seed=seed)
+    motif = "TATATGGATGAT"
+    sequence = sequence[:100] + motif + sequence[100 + len(motif):]
+    path = write_fasta([GenomeRecord(id="ref", seq=sequence)], tmp_path / "reference.fasta")
+    return sequence, {
+        "reference": {"sequence": str(path), "origin_nt": 1},
+        "qc": {"detect_origin": True, "origin_method": "ymdd"},
+    }
+
+
+def test_ymdd_origin_recovers_rotation(tmp_path):
+    reference, config = _reference_with_ymdd(tmp_path)
+    target = rotate_to_origin(reference, 150)
+
+    (oriented,) = circularise_genomes([GenomeRecord(id="t", seq=target)], config)
+
+    assert oriented.seq == reference
+    assert oriented.metadata["origin_method"] == "ymdd"
+
+
+def test_ymdd_origin_recovers_reverse_complement(tmp_path):
+    from hbvpol.domain import reverse_complement
+
+    reference, config = _reference_with_ymdd(tmp_path)
+    target = reverse_complement(rotate_to_origin(reference, 60))
+
+    (oriented,) = circularise_genomes([GenomeRecord(id="t", seq=target)], config)
+
+    assert oriented.seq == reference
+    assert oriented.strand == "+"
+    assert oriented.metadata["origin_method"] == "ymdd"
+
+
+def test_ymdd_origin_falls_back_to_constant(tmp_path):
+    _, config = _reference_with_ymdd(tmp_path)
+    (oriented,) = circularise_genomes([GenomeRecord(id="t", seq="T" * 100)], config)
+    assert oriented.seq == "T" * 100
+    assert oriented.metadata["origin_method"] == "constant"
+
+
+def test_seed_origin_method_still_available(tmp_path):
+    reference = _random_dna(200, seed=77)
+    path = write_fasta([GenomeRecord(id="ref", seq=reference)], tmp_path / "reference.fasta")
+    config = {
+        "reference": {"sequence": str(path), "origin_nt": 1},
+        "qc": {"detect_origin": True, "origin_method": "seed"},
+    }
+    target = rotate_to_origin(reference, 75)
+
+    (oriented,) = circularise_genomes([GenomeRecord(id="t", seq=target)], config)
+    assert oriented.seq == reference
+    assert oriented.metadata["origin_method"] == "seed"
+
+
+def test_lift_is_identity_after_recutting():
+    from hbvpol.qc.orfcheck import _lift
+
+    record = GenomeRecord(id="x", seq="ACGT", metadata={"origin_shift": 3})
+    assert _lift(record, 10, 4) == 10
