@@ -90,14 +90,20 @@ set -u
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 export HBVPOL="${HBVPOL:-python -m hbvpol.cli}"
 
-# OpenRDP pins numpy<2 and lives in its own environment; expose its bin so
-# `recombination.openrdp.executable: openrdp` resolves without activating it.
+# OpenRDP pins numpy<2 and lives in its own environment; expose its bin *after*
+# the active env so `openrdp` resolves without shadowing the pol env's python
+# (prepending it made `python` become OpenRDP's interpreter, which lacks PyYAML).
 OPENRDP_ENV="${OPENRDP_ENV:-/mnt/scratch/fbsnpat/envs/openrdp}"
 if [ -x "${OPENRDP_ENV}/bin/openrdp" ]; then
-    export PATH="${OPENRDP_ENV}/bin:${PATH}"
+    export PATH="${PATH}:${OPENRDP_ENV}/bin"
 fi
 
 echo "python     : $(command -v python)"
+python -c "import yaml" >/dev/null 2>&1 || {
+    echo "ERROR: the active python cannot import yaml ($(command -v python));" >&2
+    echo "       the wrong environment is first on PATH." >&2
+    exit 2
+}
 python -c "import hbvpol; print('hbvpol', hbvpol.__version__)"
 
 # --- configuration -----------------------------------------------------------
