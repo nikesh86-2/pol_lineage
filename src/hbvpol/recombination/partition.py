@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import get
+from ..coordinates import columns_for_nt_range, reference_positions, reference_sequence_from_config
 from ..domain import PolDomain, domain_spans_from_config, frame_indices
 from ..io import GenomeRecord, read_fasta, write_fasta
 from ..pipeline import get_logger
@@ -343,12 +344,15 @@ def extract_domain_subalignments(alignment, config) -> dict[PolDomain, str]:
 
     Coordinate-system contract
     --------------------------
-    The alignment's columns **must be the oriented reference frame** (i.e.
-    column ``i`` corresponds to reference position ``i + 1``), as produced by
-    the QC stage's recut.  If the alignment contains insertions relative to the
-    reference, callers must first project it onto reference coordinates (e.g.
-    by stripping a mapped reference row); otherwise the domain slices will be
-    offset.  This assumption is documented rather than guessed at runtime.
+    Column indices are selected by **reference coordinate**, using the
+    column -> reference-position map from :mod:`hbvpol.coordinates` (built from a
+    single alignment of the configured reference genome to a representative row).
+    That is what makes the slices correct on a gapped multiple alignment and on
+    genotypes that carry indels: insertion columns are assigned to the domain of
+    their nearest reference-anchored neighbour rather than being dropped or
+    shifting everything downstream.  When no reference sequence is configured,
+    the historical "column ``i`` == reference position ``i + 1``" arithmetic is
+    used instead (documented fallback, exercised by the offline tests).
 
     Returns a mapping from :class:`PolDomain` to a FASTA-format string.
     """
@@ -358,13 +362,19 @@ def extract_domain_subalignments(alignment, config) -> dict[PolDomain, str]:
 
     width = max(len(record.seq) for record in records)
     pol_start = int(get(config, "reference.pol_start_nt", 1) or 1)
+    positions = reference_positions(records, config)
+    reference = reference_sequence_from_config(config)
+    genome_length = len(reference) if reference else width
 
     result: dict[PolDomain, str] = {}
     for span in domain_spans_from_config(config):
         aa_start, aa_end = span.start, span.end
         nt_start = pol_start + (aa_start - 1) * 3
-        nt_length = (aa_end - aa_start + 1) * 3
-        indices = frame_indices(nt_start, nt_length, width)
+        if positions is None:
+            indices = frame_indices(nt_start, (aa_end - aa_start + 1) * 3, width)
+        else:
+            nt_end = pol_start + (aa_end - 1) * 3 + 2
+            indices = columns_for_nt_range(positions, nt_start, nt_end, genome_length)
 
         lines: list[str] = []
         for record in records:
