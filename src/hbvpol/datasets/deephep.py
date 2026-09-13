@@ -264,39 +264,52 @@ def _flag(value: str, conditional: bool = False) -> bool:
     return str(value).strip().lower() in allowed
 
 
-def _pol_from_genbank(record: Any, entry: Mapping[str, str]) -> str | None:
+def _pol_from_genbank(record: Any, entry: Mapping[str, str]) -> tuple[str | None, str]:
     """Extract the Pol protein from an annotated GenBank record.
 
     Prefers the deposited ``translation`` qualifier (exact); otherwise
-    translates the CDS location.  Returns ``None`` when no polymerase CDS is
-    found, so the caller can warn rather than guess.
+    translates the CDS location.  Recognises ``polymerase``/``reverse
+    transcriptase`` products, the ``P``/``P-protein`` gene names of the avian
+    and orthohepadnaviruses, and finally falls back to the longest CDS
+    (polymerase is the largest hepadnaviral protein), recording which route was
+    used so the provenance table stays honest.
+
+    Returns ``(protein, how)`` where ``how`` is ``annotated``,
+    ``longest_cds_fallback`` or ``none``.
     """
     from ..domain import translate
 
+    candidates: list[tuple[int, str]] = []
     for feature in getattr(record, "features", []):
         if getattr(feature, "type", None) != "CDS":
             continue
         quals = feature.qualifiers
-        gene = " ".join(quals.get("gene", [])).lower()
+        gene = " ".join(quals.get("gene", [])).lower().strip()
         product = " ".join(quals.get("product", [])).lower()
+        translation = (quals.get("translation") or [""])[0]
+        protein = str(translation).upper() if translation else ""
+        if not protein:
+            try:
+                nt = str(feature.extract(record.seq)).upper()
+            except Exception:  # pragma: no cover - malformed location
+                continue
+            protein = translate(nt, frame=0).rstrip("*")
+        if not protein:
+            continue
         looks_like_pol = (
             "polymerase" in product
             or "reverse transcriptase" in product
-            or gene.strip() in {"pol", "p", "polymerase"}
+            or "p-protein" in product
+            or "p protein" in product
+            or gene in {"pol", "p", "polymerase"}
         )
-        if not looks_like_pol:
-            continue
-        translation = (quals.get("translation") or [""])[0]
-        if translation:
-            return str(translation).upper()
-        try:
-            nt = str(feature.extract(record.seq)).upper()
-        except Exception:  # pragma: no cover - malformed location
-            continue
-        protein = translate(nt, frame=0).rstrip("*")
-        if protein:
-            return protein
-    return None
+        if looks_like_pol:
+            return protein, "annotated"
+        candidates.append((len(protein), protein))
+    if candidates:
+        candidates.sort(reverse=True)
+        return candidates[0][1], "longest_cds_fallback"
+    return None, "none"
 
 
 def fetch_manifest_sequences(config: Mapping[str, Any]) -> list[GenomeRecord]:
@@ -340,10 +353,15 @@ def fetch_manifest_sequences(config: Mapping[str, Any]) -> list[GenomeRecord]:
         except Exception as exc:  # noqa: BLE001 - per-accession resilience
             logger.warning("deephep: manifest accession %s could not be fetched (%s)", accession, exc)
             continue
-        protein = _pol_from_genbank(record, entry)
+        protein, how = _pol_from_genbank(record, entry)
         if not protein:
             logger.warning("deephep: no polymerase CDS found for manifest accession %s", accession)
             continue
+        if how != "annotated":
+            logger.warning(
+                "deephep: %s has no annotated polymerase CDS; using the longest CDS (%d aa)",
+                accession, len(protein),
+            )
         records.append(
             GenomeRecord(
                 id=accession,
@@ -353,6 +371,7 @@ def fetch_manifest_sequences(config: Mapping[str, Any]) -> list[GenomeRecord]:
                 metadata={
                     "group": "reference_manifest",
                     "accession": accession,
+                    "pol_annotation": how,
                     "display_name": entry.get("display_name", ""),
                     "genus": entry.get("genus", ""),
                     "host_class": entry.get("host_class", ""),
@@ -383,6 +402,7 @@ def manifest_provenance(records: Iterable[GenomeRecord]) -> list[dict[str, str]]
             "host_species": metadata.get("host_species", ""),
             "sequence_origin": metadata.get("sequence_origin", ""),
             "length": str(len(record.seq)),
+            "pol_annotation": metadata.get("pol_annotation", ""),
             "source_publication": metadata.get("source_publication", ""),
             "include_codon_analysis": metadata.get("include_codon_analysis", ""),
             "include_structure_analysis": metadata.get("include_structure_analysis", ""),
@@ -396,7 +416,7 @@ def _write_provenance(path: Path, records: Iterable[GenomeRecord]) -> None:
 
     columns = [
         "accession", "display_name", "genus", "host_class", "host_species",
-        "sequence_origin", "length", "source_publication",
+        "sequence_origin", "length", "pol_annotation", "source_publication",
         "include_codon_analysis", "include_structure_analysis",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)

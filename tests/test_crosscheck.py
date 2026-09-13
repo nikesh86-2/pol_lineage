@@ -59,6 +59,36 @@ def test_load_reference_manifest_missing_file(tmp_path):
     assert load_reference_manifest(tmp_path / "nope.tsv") == []
 
 
+def test_pol_from_genbank_recognises_p_protein_and_falls_back():
+    from Bio.Seq import Seq
+    from Bio.SeqFeature import SimpleLocation, SeqFeature
+    from Bio.SeqRecord import SeqRecord
+
+    from hbvpol.datasets.deephep import _pol_from_genbank
+
+    annotated = SeqRecord(Seq("ATG" * 10), id="x")
+    annotated.features = [
+        SeqFeature(
+            SimpleLocation(0, 30),
+            type="CDS",
+            qualifiers={"product": ["P-protein"], "translation": ["M" * 10]},
+        )
+    ]
+    protein, how = _pol_from_genbank(annotated, {})
+    assert how == "annotated"
+    assert protein == "M" * 10
+
+    # No polymerase annotation: fall back to the longest CDS, recorded as such.
+    hypothetical = SeqRecord(Seq("ATG" * 20), id="y")
+    hypothetical.features = [
+        SeqFeature(SimpleLocation(0, 30), type="CDS", qualifiers={"translation": ["M" * 10]}),
+        SeqFeature(SimpleLocation(30, 60), type="CDS", qualifiers={"translation": ["M" * 20]}),
+    ]
+    protein2, how2 = _pol_from_genbank(hypothetical, {})
+    assert how2 == "longest_cds_fallback"
+    assert len(protein2) == 20
+
+
 def test_manifest_provenance_filters_to_manifest_group():
     manifest_record = GenomeRecord(
         id="NC_030446",
