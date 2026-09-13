@@ -209,11 +209,12 @@ Status after wiring the reference into the pipeline:
 
 1. **Domain boundaries** — resolved per genotype through
    `reference.domain_spans_file` (genotype row → explicit `reference.domain_spans`
-   list → `default` row → built-in), clamped to `reference.pol_length_aa`.
-   Calibrated for genotypes A–F (Pol lengths 845/843 vs D's 832 aa); G–J still
-   fall back to the `default` row. Pol boundaries are protein-level, so the rows
-   are calibrated by alignment with `scripts/locate_pol_domains.py` (see below),
-   not by copying genotype D's numbers.
+   list → `default` row → built-in), clamped to `reference.pol_length_aa` unless
+   the row is genotype-calibrated. Calibrated for all of A–J (Pol lengths: A 845,
+   B/C/F/H/I 843, E/G 842, D/J 832; all corroborated by the GenBank CDS
+   translation). Pol boundaries are protein-level, so rows are calibrated by
+   alignment with `scripts/locate_pol_domains.py` (see below), not by copying
+   genotype D's numbers.
 2. **The surface-frame offset** — *resolved automatically.* The `reference`
    stage computes it as `(s_start − pol_start) mod 3` from the CDS annotation,
    so it is no longer assumed.
@@ -230,11 +231,13 @@ Status after wiring the reference into the pipeline:
    missing backend an error and `max_positions: 0` to scan every variable
    column.
 6. **ε coordinates** — resolved per genotype through `epsilon.spans_file`
-   (table row → `default` row → `genome_span` → built-in). Calibrated for A–F,
+   (table row → `default` row → `genome_span` → built-in). Calibrated for A–J,
    which all place ε at 1846–1905 in the reference frame (genotype D reproduces
-   the default exactly); G–J fall back to `default`. Rows are calibrated by
-   alignment (`scripts/locate_epsilon.py`) after normalising each reference's
-   rotation and strand. The Pol–ε compatibility heuristic remains uncalibrated.
+   the default exactly; identity 96.7–100%), including genotype G despite its
+   36-nt core-gene insertion. Rows are calibrated by alignment
+   (`scripts/locate_epsilon.py`) after normalising each reference's rotation and
+   strand. The Pol–ε compatibility heuristic remains uncalibrated; genotype I's
+   row is lower-confidence (provisional/contested genotype).
 7. **The DMS map** — supplied (`resources/hbv_pol_dms_2024.tsv`).
 
 ### Calibrating per-genotype spans (`hbvpol.calibrate`)

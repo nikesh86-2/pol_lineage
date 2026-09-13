@@ -25,11 +25,13 @@ Fetch genotype reference genomes with Biopython Entrez, e.g.::
                            retmode="text")
     SeqIO.write(SeqIO.read(handle, "fasta"), "genotype_A.fasta", "fasta")
 
-Suggested accessions (verify G/H against HBVdb before trusting):
+Suggested accessions (all calibrated; verify before re-use):
 
     A X02763   B D00329 (alt AB219428)   C AB014362 (alt GQ924620)
     D V01460 (alt AF121240)   E X75657   F X75658 (alt AY090458)
-    G AF160501 [verify]       H AY090454 [verify]
+    G AF160501 (3248 nt; 36-nt core insertion)   H AY090454
+    I EU833891 [provisional/contested: no consensus type strain]
+    J AB486012 [sole known isolate]
 
 Usage::
 
@@ -124,11 +126,13 @@ def main() -> None:
     for warning in result.warnings:
         print(f"WARNING [{args.genotype}]: {warning}", file=sys.stderr)
 
-    source = args.source_note or (
+    source = (
         f"auto-calibrated by Pol protein alignment against {target_path.name}"
         f"{detection_note}; identity {result.identity:.1%}, coverage {result.coverage:.1%}; "
         "verify against the annotation before use"
     )
+    if args.source_note:
+        source = f"{source}; NOTE: {args.source_note}"
 
     rows = [[args.genotype, span.domain.value, span.start, span.end, source] for span in result.spans]
     if args.out:

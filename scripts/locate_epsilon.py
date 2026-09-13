@@ -20,8 +20,8 @@ conserved ε query, and writes the 1-based coordinates in the reference frame::
 
 The query defaults to the reference's own span, so the reference row is a
 no-op control.  Fetch genotype references as FASTA (see
-``locate_pol_domains.py`` for suggested accessions) and verify G/H against
-HBVdb before trusting them.
+``locate_pol_domains.py`` for the accessions; genotype I is provisional and
+has no consensus type strain) and confirm any new accession before trusting it.
 """
 
 from __future__ import annotations
@@ -126,11 +126,13 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    source = args.source_note or (
+    source = (
         f"auto-calibrated by local alignment of a {len(query)}-nt epsilon query to "
         f"{target_path.name} normalised to the reference frame{note}; "
         f"identity {hit.identity:.1%}, coverage {hit.coverage:.1%}; verify before use"
     )
+    if args.source_note:
+        source = f"{source}; NOTE: {args.source_note}"
     row = [args.genotype, hit.start, hit.end, source]
 
     if args.out:

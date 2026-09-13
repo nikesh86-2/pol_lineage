@@ -131,8 +131,8 @@ reference:
   #   - {domain: RNaseH, start: 682, end: 832}
   # Per-genotype calibrated boundaries (TSV: genotype, domain, start, end).  A
   # row for the requested genotype wins over the list above; a 'default' row is
-  # used when the genotype is absent.  Calibrate with
-  # scripts/locate_pol_domains.py.  Set to null to ignore the table.
+  # used when the genotype is absent.  A-J are calibrated; calibrate/re-calibrate
+  # with scripts/locate_pol_domains.py.  Set to null to ignore the table.
   domain_spans_file: resources/pol_domain_spans.tsv
 
 qc:
@@ -304,9 +304,9 @@ epsilon:
   length_nt: [55, 70]
   fold_models: [literature, rnafold, alphafold3_rna]
   # Per-genotype coordinates.  Resolution order: the table row for the record's
-  # genotype, then a `default` row, then `genome_span` below.  A-F are
+  # genotype, then a `default` row, then `genome_span` below.  A-J are
   # calibrated (all 1846-1905 in the reference frame) with
-  # scripts/locate_epsilon.py; G-J fall back to the default row.
+  # scripts/locate_epsilon.py; the `default` row applies when a genotype is absent.
   spans_file: resources/epsilon_spans.tsv
   genome_span: [1846, 1905]            # fallback, reference numbering (EcoRI origin)
   # Covariation between TP residues and epsilon base pairs.

@@ -108,7 +108,7 @@ Any config value can be overridden on the command line with dotted keys, e.g.
 config/config.yaml        master configuration (every stage reads from here)
 environment.yml           Python analysis stack
 environment-tools.yml     optional bioconda CLI tools
-resources/                resistance catalogue, mutants, ε + Pol-domain spans (A–F calibrated),
+resources/                resistance catalogue, mutants, ε + Pol-domain spans (A–J calibrated),
                           genotype_references/, DMS map
 src/hbvpol/
   config.py domain.py reference.py io/ pipeline.py synthetic.py cli.py
