@@ -152,7 +152,11 @@ below `structure.hinge_plddt` are retained and reclassified as candidate
 > computational screen found a predicted pocket to be conformationally unstable
 > and its selected compounds non-inhibitory. `hbvpol.structure.md` therefore
 > requires **pocket persistence** across an MD trajectory
-> (`pocket_persistence_frac`) before any large-scale screening.
+> (`pocket_persistence_frac`) before any large-scale screening. The stage plans
+> MD and analyses it with MDAnalysis, so **OpenMM (default) and GROMACS are
+> interchangeable**: run the plan with `scripts/run_md_openmm.py`, which writes
+> `topology.pdb` + `trajectory.dcd` under `structure/md/trajectories/` for the
+> persistence pass to read.
 
 ---
 

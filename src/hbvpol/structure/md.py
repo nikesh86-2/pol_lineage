@@ -24,6 +24,7 @@ import pandas as pd
 from ..config import get
 from ..io import read_table
 from ..pipeline import get_logger
+from .openmm_md import openmm_command_plan
 
 __all__ = [
     "MD_MANIFEST_COLUMNS",
@@ -90,11 +91,7 @@ def _command_plan(model_path: str, model_id: str, config: dict, threads: int) ->
     forcefield = str(get(config, "structure.md.forcefield", "amber14sb") or "amber14sb")
     water = str(get(config, "structure.md.water", "tip3p") or "tip3p")
     if engine == "openmm":
-        return "\n".join([
-            f"# OpenMM fallback plan for {model_id}",
-            f"python -m openmm.app.ForceField --pdb {model_path} --forcefield {forcefield} --water {water}",
-            "# minimise -> equilibrate -> production (configure in a script)",
-        ])
+        return openmm_command_plan(model_path, model_id, config)
     return "\n".join([
         f"gmx pdb2gmx -f {model_path} -o {model_id}.gro -ff {forcefield} -water {water}",
         f"gmx editconf -f {model_id}.gro -o {model_id}_box.gro -c -d 1.0 -bt cubic",

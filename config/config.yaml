@@ -293,12 +293,28 @@ structure:
   # Regions below this pLDDT are retained and reclassified as candidate hinges.
   hinge_plddt: 70
   md:
-    engine: gromacs
+    # OpenMM replaces GROMACS as a drop-in: the stage only plans MD and analyses
+    # the trajectory with MDAnalysis, so "openmm" (default) and "gromacs" differ
+    # only in the command plan.  Run `python scripts/run_md_openmm.py` to produce
+    # topology.pdb + trajectory.dcd under structure/md/trajectories/.
+    engine: openmm
     forcefield: amber14sb
     water: tip3p
     ns_per_model: 100
     n_models: 20                                 # 10-20 prioritised models
     pocket_persistence_frac: 0.5                 # transient-cavity criterion
+    trajectory_dir: null                         # default <outroot>/structure/md/trajectories
+    openmm:
+      platform: auto                             # auto | CUDA | OpenCL | CPU | Reference
+      padding_nm: 1.0
+      ionic_strength_molar: 0.15
+      temperature_k: 300
+      friction_per_ps: 1.0
+      timestep_fs: 2.0
+      equilibration_ps: 100
+      report_interval: 5000                      # steps between DCD frames
+      minimize_max_iterations: 1000
+      forcefield_files: null                     # explicit XML list; overrides forcefield/water
 
 # -----------------------------------------------------------------------------
 # Stage 5 — Epsilon RNA / Pol coevolution

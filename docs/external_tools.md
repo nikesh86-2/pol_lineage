@@ -86,10 +86,27 @@ column schema.
 mamba install -n pol -c conda-forge gromacs
 ```
 
-`hbvpol.structure.md` emits GROMACS command plans and can fall back to OpenMM
-when GROMACS is unavailable. Its purpose is the pocket-persistence criterion
-before any large-scale docking: a predicted cavity must survive dynamics, not
-just score well in a static structure.
+`hbvpol.structure.md` emits GROMACS or OpenMM command plans.  The stage only
+**plans** MD and **analyses** the trajectory with MDAnalysis
+(`pocket_persistence`), so the two engines are interchangeable as long as the
+engine writes a topology plus a trajectory into the directory the analysis reads
+(default `<outroot>/structure/md/trajectories/`).
+
+OpenMM (already installed in this environment) is the default engine.  Run it
+with the bundled script, which performs add-H -> solvate -> ions -> minimise ->
+equilibrate -> production and writes `topology.pdb` + `trajectory.dcd`:
+
+```bash
+python scripts/run_md_openmm.py \
+    --pdb output/structure/models/apo/D/colabfold_seed0.pdb --model-id apo_D
+hbvpol structure -c config/config.yaml   # recompute pocket_persistence
+```
+
+Frames are captured every `structure.md.openmm.report_interval` steps and the
+protocol is configured under `structure.md.openmm` (platform, padding, ionic
+strength, temperature, timestep, equilibration).  Its purpose is the
+pocket-persistence criterion before any large-scale docking: a predicted cavity
+must survive dynamics, not just score well in a static structure.
 
 ### Structural predictors
 
