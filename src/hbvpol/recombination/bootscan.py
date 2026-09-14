@@ -180,8 +180,9 @@ def run_bootscan(alignment, config, workdir) -> pd.DataFrame:
 
     executable_name = get(config, "recombination.bootscan.executable")
     if executable_name and (Path(str(executable_name)).exists() or have_executable(str(executable_name))):
-        alignment_path = Path(alignment)
-        out_path = workdir / "bootscan_output.txt"
+        # Absolute: run_command sets cwd=workdir (see the other tool wrappers).
+        alignment_path = Path(alignment).resolve()
+        out_path = (workdir / "bootscan_output.txt").resolve()
         try:
             run_command(
                 [str(executable_name), "-f", str(alignment_path), "-o", str(out_path)],

@@ -28,6 +28,7 @@ import pandas as pd
 from ..config import get
 from ..io import GenomeRecord, read_fasta, read_table, write_fasta, write_table
 from ..pipeline import get_logger, output_dir, stage_dir
+from ..provenance import provenance
 from .coevolve import COEVOLUTION_COLUMNS, compatibility_matrix, pol_epsilon_coevolution
 from .fold import extract_epsilon, fold_epsilon
 
@@ -174,6 +175,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "compatibility_predictor": str(
             get(config, "epsilon.compatibility.predictor", "contact_map_energy")
         ),
+        "provenance": provenance(["RNAfold"]),
     }
     summary_path = outdir / "epsilon_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

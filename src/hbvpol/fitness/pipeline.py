@@ -24,6 +24,7 @@ import pandas as pd
 from ..config import get
 from ..io import read_table, write_table
 from ..pipeline import get_logger, output_dir, stage_dir
+from ..provenance import provenance
 from .dms import (
     CRITERIA,
     DMS_COLUMNS,
@@ -136,6 +137,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "criteria_enabled": {
             name: bool(get(config, f"fitness.criteria.{name}", True)) for name in CRITERIA
         },
+        "provenance": provenance([]),
     }
     summary_path = outdir / "fitness_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

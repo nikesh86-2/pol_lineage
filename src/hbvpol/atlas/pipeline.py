@@ -30,6 +30,7 @@ from ..domain import domain_of, domain_spans_from_config
 from ..fitness.dms import CRITERIA, score_criteria
 from ..io import read_table, write_table
 from ..pipeline import get_logger, output_dir, stage_dir
+from ..provenance import provenance
 from .report import build_report
 from .targets import (
     INTERACTION_COLUMNS,
@@ -61,7 +62,8 @@ _LINEAGE_ALIASES = ("lineage", "genotype", "clade", "subgenotype", "group")
 #: Files joined into the atlas, with per-file column renames.
 _UPSTREAM = [
     ("selection/entropy.tsv", {"entropy": "aa_entropy", "shannon_entropy": "aa_entropy"}),
-    ("selection/dual_frame.tsv", {"consequence": "surface_consequence", "dual_frame": "surface_consequence"}),
+    # dual_frame already carries the documented `consequence_class` column.
+    ("selection/dual_frame.tsv", {}),
     ("selection/genotype_specificity.tsv", {"specificity": "lineage_specific", "fst": "fst"}),
     ("selection/resistance.tsv", {"resistance": "is_resistance_site"}),
     ("fitness/dms_annotated.tsv", {}),
@@ -89,7 +91,7 @@ def _lineage_from_model_id(model_id: str, lineages: list[str]) -> str:
 
 #: Severity ordering for collapsing nucleotide-level dual-frame rows to codons.
 _SEVERITY = {
-    "rna_element": 4,
+    "disruptive_rna_element": 4,
     "nonsynonymous_both": 3,
     "nonsynonymous_pol_only": 2,
     "nonsynonymous_surface_only": 2,
@@ -195,15 +197,62 @@ def _hinge_frame(config: dict, root: Path) -> pd.DataFrame | None:
             rows.append({"lineage": lineage, "pol_position": position, "is_hinge": True})
     if not rows:
         return None
-    return pd.DataFrame(rows)
+    # One row per (lineage, pol_position): several models of the same lineage can
+    # flag overlapping hinge ranges, which would otherwise fan the atlas out.
+    return (
+        pd.DataFrame(rows)
+        .groupby(["lineage", "pol_position"], as_index=False)["is_hinge"]
+        .max()
+    )
 
 
-def _pair_support_frame(outroot: Path, relative: str, value_name: str) -> pd.DataFrame | None:
+def _interface_frame(config: dict, root: Path) -> pd.DataFrame | None:
+    """Per-position interface flags from ``structure/interface_residues.tsv``.
+
+    The structure stage flags residues within ``structure.interface_cutoff`` of a
+    nucleic-acid chain.  When the file is absent the atlas carries no interface
+    signal, and ``interface_or_hinge`` falls back to hinges (documented).
+    """
+    path = output_dir(config, root) / "structure" / "interface_residues.tsv"
+    if not path.exists():
+        return None
+    try:
+        contacts = read_table(path)
+    except Exception as error:  # pragma: no cover - defensive
+        logger.warning("could not read %s: %s", path, error)
+        return None
+    position_col = _first_column(contacts, ("pol_position", "residue_index", "residue"))
+    if position_col is None or "model_id" not in contacts.columns:
+        return None
+    if "is_interface" in contacts.columns:
+        flag = contacts["is_interface"]
+    elif "min_distance" in contacts.columns:
+        cutoff = float(get(config, "structure.interface_cutoff", 4.5) or 4.5)
+        flag = pd.to_numeric(contacts["min_distance"], errors="coerce") <= cutoff
+    else:
+        return None
+    lineages = [str(x) for x in (get(config, "structure.lineages", []) or [])]
+    frame = pd.DataFrame({
+        "lineage": contacts["model_id"].map(lambda m: _lineage_from_model_id(str(m), lineages)),
+        "pol_position": pd.to_numeric(contacts[position_col], errors="coerce"),
+        "is_interface": pd.Series(flag, index=contacts.index).fillna(False).astype(bool),
+    }).dropna(subset=["pol_position"])
+    if frame.empty:
+        return None
+    frame["pol_position"] = frame["pol_position"].astype(int)
+    return frame.groupby(["lineage", "pol_position"], as_index=False)["is_interface"].max()
+
+
+def _pair_support_frame(
+    outroot: Path, relative: str, value_name: str, partner_name: str | None = None
+) -> pd.DataFrame | None:
     """Reduce a pair-indexed table (covariation/epistasis) to per-position support.
 
     Pair tables are keyed by ``(position_i, position_j)``, which cannot be joined
-    on the atlas key.  Each pair contributes its score to both endpoints, and the
-    maximum over a position's partners is used as that position's support.
+    on the atlas key.  Each pair contributes its score to both endpoints and the
+    best-scoring partner is kept per position: its score as ``value_name``, and
+    when ``partner_name`` is given the partner position too, so the atlas can
+    rebuild an explicit contact network rather than only a per-position maximum.
     """
     path = outroot / relative
     if not path.exists():
@@ -222,17 +271,30 @@ def _pair_support_frame(outroot: Path, relative: str, value_name: str) -> pd.Dat
                else pd.Series("all", index=table.index))
     score = pd.to_numeric(table["score"], errors="coerce")
     endpoints = []
-    for column in ("position_i", "position_j"):
+    for own, partner in (("position_i", "position_j"), ("position_j", "position_i")):
         endpoints.append(pd.DataFrame({
             "lineage": lineage,
-            "pol_position": pd.to_numeric(table[column], errors="coerce"),
+            "pol_position": pd.to_numeric(table[own], errors="coerce"),
+            "partner": pd.to_numeric(table[partner], errors="coerce"),
             value_name: score,
         }))
     long = pd.concat(endpoints, ignore_index=True).dropna(subset=["pol_position", "lineage"])
     if long.empty:
         return None
     long["pol_position"] = long["pol_position"].astype(int)
-    return long.groupby(["lineage", "pol_position"], as_index=False)[value_name].max()
+    best = (
+        long.sort_values(value_name, ascending=False)
+        .drop_duplicates(subset=["lineage", "pol_position"], keep="first")
+        .reset_index(drop=True)
+    )
+    if partner_name is None:
+        return best[["lineage", "pol_position", value_name]]
+    return pd.DataFrame({
+        "lineage": best["lineage"],
+        "pol_position": best["pol_position"],
+        value_name: best[value_name],
+        partner_name: pd.to_numeric(best["partner"], errors="coerce").astype("Int64"),
+    })
 
 
 def _collect_frames(config: dict, root: Path) -> list[pd.DataFrame]:
@@ -251,12 +313,17 @@ def _collect_frames(config: dict, root: Path) -> list[pd.DataFrame]:
         if normalised is not None:
             frames.append(normalised)
     for relative, value_name in _PAIR_UPSTREAM:
-        support = _pair_support_frame(outroot, relative, value_name)
+        # The covariation partner lets the atlas reconstruct real contact pairs.
+        partner_name = "covariation_partner" if value_name == "covariation_support" else None
+        support = _pair_support_frame(outroot, relative, value_name, partner_name)
         if support is not None:
             frames.append(support)
     hinges = _hinge_frame(config, root)
     if hinges is not None:
         frames.append(hinges)
+    interface = _interface_frame(config, root)
+    if interface is not None:
+        frames.append(interface)
     return frames
 
 
@@ -342,6 +409,13 @@ def run(config: dict, root) -> dict[str, Path]:
     atlas = _join(frames)
     atlas = _derive(atlas, config)
 
+    # Contract: one row per (lineage, pol_position).  Every source is reduced to
+    # the key before the join, but collapse defensively so a new or finer-grained
+    # upstream source cannot silently fan the atlas out.
+    if atlas.duplicated(KEY).any():
+        logger.warning("atlas had duplicate %s rows; collapsing", KEY)
+        atlas = _collapse_duplicates(atlas)
+
     # The atlas is defined per Pol residue; drop positions that fall outside the
     # annotated domains unless the caller explicitly wants them retained.
     if not bool(get(config, "atlas.include_unannotated", False)) and "domain" in atlas.columns:
@@ -387,6 +461,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "criteria": CRITERIA,
         "weights": dict(get(config, "atlas.ranked_targets.weights", {}) or {}),
         "key": KEY,
+        "provenance": provenance([]),
     }
     summary_path = outdir / "atlas_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

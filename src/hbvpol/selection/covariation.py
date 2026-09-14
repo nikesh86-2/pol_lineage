@@ -337,6 +337,12 @@ def covarying_pairs(alignment, config: Mapping[str, object]) -> pd.DataFrame:
             elif external.shape[0] == len(columns):
                 matrix, positions = external, columns
             else:
+                if bool(get(config, "selection.covariation.require_backend", False)):
+                    raise StageError(
+                        "external DCA matrix is %dx%d but %d columns were selected "
+                        "(selection.covariation.require_backend)"
+                        % (external.shape[0], external.shape[1], len(columns))
+                    )
                 logger.warning(
                     "external DCA matrix is %dx%d but %d columns were selected; "
                     "using the APC-corrected proxy",

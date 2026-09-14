@@ -24,7 +24,8 @@ from pathlib import Path
 import pandas as pd
 
 from ..config import get
-from ..pipeline import StageError, effective_threads, get_logger, have_executable, output_dir, run_command, stage_dir
+from ..pipeline import StageError, effective_threads, get_logger, have_executable, output_dir, run_command, stage_dir, strict_tools
+from ..provenance import provenance
 from .bootscan import run_bootscan
 from .gard import run_gard
 from .partition import (
@@ -124,6 +125,8 @@ def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
             check=False,
         )
     except StageError as error:
+        if strict_tools(config):
+            raise StageError(f"mafft could not run: {error}") from error
         logger.warning("mafft could not run (%s); using input unaligned", error)
         return input_fasta
 
@@ -133,6 +136,8 @@ def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
             tail = stderr_log.read_text(encoding="utf-8", errors="replace")[-800:]
         except OSError:
             pass
+        if strict_tools(config):
+            raise StageError(f"mafft failed (exit {result.returncode}); refusing to proceed unaligned")
         logger.warning(
             "mafft failed (exit %d) on %d sequences; using input unaligned. stderr: %s",
             result.returncode, n_seqs, tail,
@@ -141,6 +146,8 @@ def _align(input_fasta: Path, outdir: Path, config: dict) -> Path:
 
     stdout = result.stdout or ""
     if not stdout.lstrip().startswith(">"):
+        if strict_tools(config):
+            raise StageError("mafft output did not look like FASTA; refusing to proceed unaligned")
         logger.warning("mafft output did not look like FASTA; using input unaligned")
         return input_fasta
     aligned.write_text(stdout, encoding="utf-8")
@@ -236,6 +243,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "consensus_frac": float(get(config, "recombination.consensus_frac", 0.5) or 0.5),
         "block_alns": {name: str(path) for name, path in block_paths.items()},
         "domain_subalns": {name: str(path) for name, path in domain_paths.items()},
+        "provenance": provenance(["mafft", "openrdp", "hyphy", "3seq", "rdp5"]),
     }
     summary_path = outdir / "recombination_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

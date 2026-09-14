@@ -147,3 +147,20 @@ def test_score_criteria_handles_missing_columns_gracefully():
     scored = score_criteria(table, _criteria_config())
     assert len(scored) == 2
     assert not scored["passes_criteria"].any()
+
+
+def test_not_explained_by_surface_frame_prefers_consequence_class():
+    # The dual-frame `consequence_class` is the documented source; the DMS-annotated
+    # `surface_consequence` must not override it when both columns are present.
+    table = pd.DataFrame([
+        _base_row(consequence_class="synonymous_both"),         # surface-explained
+        _base_row(consequence_class="nonsynonymous_pol_only"),  # not explained
+    ])
+    scored = score_criteria(table, _criteria_config())
+    assert list(scored["not_explained_by_surface_frame"]) == [False, True]
+
+
+def test_not_explained_by_surface_frame_falls_back_to_dms_column():
+    table = pd.DataFrame([_base_row()])  # only surface_consequence present
+    scored = score_criteria(table, _criteria_config())
+    assert bool(scored.iloc[0]["not_explained_by_surface_frame"]) is True

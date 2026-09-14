@@ -16,6 +16,12 @@ project:
   # binaries on PATH (this cluster ships IQ-TREE as `iqtree`, not `iqtree2`).
   # Leave empty to allow fallbacks (offline tests / smoke runs).
   required_tools: [mafft, iqtree, hyphy, trimal, plmc, 3seq, cd-hit-est]
+  # When true, a present-but-failing tool (crash/timeout/unparseable output) is a
+  # hard error instead of a silent heuristic fallback (Neighbor-Joining, Fitch
+  # parsimony, Nussinov folding, exact dedup, ...).  Leave false until every
+  # optional tool you want (RNAfold, structural predictors, ...) is installed,
+  # then set true for a publication run.
+  strict_tools: false
 
 # -----------------------------------------------------------------------------
 # Stage 1a — Human-HBV dataset
@@ -121,7 +127,7 @@ reference:
   # NCBI's reference sequence NC_003977.2 is genotype D (ayw): 3182 bp, 832 aa
   # Pol.  The constants below are *fallbacks*; the `reference` stage derives the
   # true values from the annotation and load_config overrides them.
-  accession: NC_003977
+  accession: NC_003977.2             # version-pinned RefSeq accession (was NC_003977)
   length: 3182
   # Derive coordinates from the annotated reference instead of trusting the
   # constants below.  The `reference` stage writes
@@ -215,6 +221,13 @@ recombination:
   gard:
     rate_variation: gamma
     n_categories: 4
+    # Cap the step-up search: each additional partition is far costlier than the
+    # last, and GARD otherwise considers up to 10000 breakpoints.
+    max_breakpoints: 4
+    # Wall-clock bound (seconds).  GARD is single-threaded, so an unbounded run
+    # can consume the whole allocation; on timeout the partial report spooled
+    # after the last completed breakpoint search is used instead.
+    timeout_s: 43200
   rdp5:
     executable: rdp5
     discontiguous: false
@@ -321,6 +334,9 @@ structure:
     - conserved_packing
   # Regions below this pLDDT are retained and reclassified as candidate hinges.
   hinge_plddt: 70
+  # A Pol residue within this distance (Å) of a nucleic-acid chain atom is flagged
+  # as an interface residue in structure/interface_residues.tsv.
+  interface_cutoff: 4.5
   md:
     # OpenMM replaces GROMACS as a drop-in: the stage only plans MD and analyses
     # the trajectory with MDAnalysis, so "openmm" (default) and "gromacs" differ

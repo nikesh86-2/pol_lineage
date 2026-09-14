@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -230,6 +231,52 @@ def test_gard_fails_soft_when_unavailable(synthetic_alignment, tmp_path):
     assert list(frame.columns) == BREAKPOINT_COLUMNS
 
 
+def test_gard_caps_breakpoints_and_bounds_runtime(synthetic_alignment, tmp_path, monkeypatch):
+    workdir = tmp_path / "work"
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["timeout"] = kwargs.get("timeout")
+        (workdir / "gard.GARD.json").write_text(
+            json.dumps({"improvements": {"0": {"breakpoints": [[123]]}}}), encoding="utf-8"
+        )
+        return None
+
+    monkeypatch.setattr(gard, "have_executable", lambda name: True)
+    monkeypatch.setattr(gard, "run_command", fake_run)
+
+    config = {"recombination": {"gard": {
+        "rate_variation": "gamma", "n_categories": 4,
+        "max_breakpoints": 3, "timeout_s": 60,
+    }}}
+    frame = gard.run_gard(synthetic_alignment, config, workdir)
+
+    assert "--max-breakpoints" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--max-breakpoints") + 1] == "3"
+    assert captured["argv"][captured["argv"].index("--rate-variation") + 1] == "gamma"
+    assert captured["timeout"] == 60.0
+    assert list(frame["bp_start"]) == [123]
+
+
+def test_gard_keeps_partial_report_on_timeout(synthetic_alignment, tmp_path, monkeypatch):
+    workdir = tmp_path / "work"
+
+    def fake_run(argv, **kwargs):
+        (workdir / "gard.GARD.json").write_text(
+            json.dumps({"improvements": {"0": {"breakpoints": [[1150]]}}}), encoding="utf-8"
+        )
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(gard, "have_executable", lambda name: True)
+    monkeypatch.setattr(gard, "run_command", fake_run)
+
+    config = {"recombination": {"gard": {"max_breakpoints": 4, "timeout_s": 1}}}
+    frame = gard.run_gard(synthetic_alignment, config, workdir)
+
+    assert list(frame["bp_start"]) == [1150]
+
+
 # --------------------------------------------------------------------------- #
 # parsers
 # --------------------------------------------------------------------------- #
@@ -249,13 +296,54 @@ def test_parse_rdp5_output(tmp_path):
     assert frame.iloc[0]["recombinant_id"] == "R1"
 
 
-def test_parse_gard_json(tmp_path):
+def test_parse_gard_json_uses_selected_improvement(tmp_path):
+    # Real GARD v0.2 shape: the selected model is the highest step in
+    # `improvements`; `breakpointData` holds partition intervals and
+    # `siteBreakPointSupport` the per-site score for the next candidate, so
+    # neither may be mined for breakpoint positions.
     json_path = tmp_path / "gard.GARD.json"
-    json_path.write_text(json.dumps({"breakpoints": [100, 500, 900]}))
+    json_path.write_text(json.dumps({
+        "improvements": {
+            "0": {"breakpoints": [[1786]], "deltaAICc": 2790.66},
+            "1": {"breakpoints": [[1150], [2247]], "deltaAICc": 1384.48},
+        },
+        "breakpointData": {
+            "0": {"bps": [[1, 1150]], "tree": "(x);"},
+            "1": {"bps": [[1151, 2247]], "tree": "(x);"},
+            "2": {"bps": [[2248, 4010]], "tree": "(x);"},
+        },
+        "siteBreakPointSupport": {"1001": 1e-46, "1019": 2e-113},
+        "potentialBreakpoints": 1660,
+    }), encoding="utf-8")
+
     frame = gard.parse_gard_json(json_path)
+
     assert list(frame.columns) == BREAKPOINT_COLUMNS
-    assert list(frame["bp_start"]) == [100, 500, 900]
+    assert list(frame["bp_start"]) == [1150, 2247]
     assert set(frame["tool"]) == {"gard"}
+
+
+def test_parse_gard_json_no_recombination_is_empty(tmp_path):
+    json_path = tmp_path / "gard.GARD.json"
+    json_path.write_text(json.dumps({
+        "improvements": {},
+        "breakpointData": {"0": {"bps": [[1, 4010]]}},
+        "siteBreakPointSupport": {"1001": 1e-46},
+    }), encoding="utf-8")
+    assert gard.parse_gard_json(json_path).empty
+
+
+def test_parse_gard_json_without_improvements_falls_back_to_partition_ends(tmp_path):
+    json_path = tmp_path / "gard.GARD.json"
+    json_path.write_text(json.dumps({
+        "breakpointData": {
+            "0": {"bps": [[1, 1150]]},
+            "1": {"bps": [[1151, 2247]]},
+            "2": {"bps": [[2248, 4010]]},
+        },
+    }), encoding="utf-8")
+    frame = gard.parse_gard_json(json_path)
+    assert list(frame["bp_start"]) == [1150, 2247]
 
 
 # --------------------------------------------------------------------------- #

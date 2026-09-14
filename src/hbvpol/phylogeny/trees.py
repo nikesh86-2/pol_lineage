@@ -21,7 +21,7 @@ import numpy as np
 
 from ..config import get
 from ..io import GenomeRecord, write_fasta
-from ..pipeline import StageError, effective_threads, get_logger, have_executable, run_command
+from ..pipeline import StageError, effective_threads, get_logger, have_executable, run_command, strict_tools
 from .align import as_pairs
 
 __all__ = [
@@ -242,6 +242,8 @@ def infer_tree(alignment, out_path, config, prefix: str = "") -> Path:
             ).resolve()
             bootstrap = int(get(config, "phylogeny.bootstrap", 1000) or 1000)
             threads = effective_threads(config)
+            # Pin the seed so UFBoot resampling and model search are reproducible.
+            seed = int(get(config, "project.seed", 1) or 1)
             pre = (out.parent / stem).resolve()
             command = [
                 executable,
@@ -249,6 +251,7 @@ def infer_tree(alignment, out_path, config, prefix: str = "") -> Path:
                 "-m", "MFP",
                 "-B", str(bootstrap),
                 "-T", str(max(1, threads)),
+                "--seed", str(seed),
                 "-pre", str(pre),
                 "-redo",
             ]
@@ -261,6 +264,14 @@ def infer_tree(alignment, out_path, config, prefix: str = "") -> Path:
             logger.warning("IQ-TREE produced no treefile for %s; using Neighbor-Joining", stem)
         except Exception as error:
             logger.warning("IQ-TREE failed for %s (%s); using Neighbor-Joining", stem, error)
+
+    # A publication run must not silently substitute a different method for a
+    # present-but-failing IQ-TREE.
+    if executable and strict_tools(config):
+        raise StageError(
+            f"{stem}: IQ-TREE was available but produced no usable tree; refusing the "
+            "Neighbor-Joining fallback (project.strict_tools)"
+        )
 
     # Guard the pure-Python fallback: p-distances are O(N^2) and Neighbor-Joining
     # is O(N^3), so a large taxon set never finishes.  Bail out loudly instead of

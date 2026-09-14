@@ -200,7 +200,12 @@ def reconcile_breakpoints(frames: list[pd.DataFrame], config) -> pd.DataFrame:
             cluster_id += 1
             tools = sorted({str(row["tool"]) for row in rows})
             partners = [str(row["partner"]) for row in rows if str(row["partner"]).strip()]
-            partner = max(set(partners), key=partners.count) if partners else ""
+            # Deterministic tie-break (most frequent, then lexicographic) so the
+            # chosen partner does not depend on set iteration order.
+            partner = (
+                min(partners, key=lambda value: (-partners.count(value), value))
+                if partners else ""
+            )
             supports = [
                 float(row["support"]) if pd.notna(row["support"]) else 1.0 for row in rows
             ]

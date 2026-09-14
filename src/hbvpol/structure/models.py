@@ -248,7 +248,9 @@ def run_predictor(record: GenomeRecord, out_dir, config: dict, strategy: str | N
     predictor executable is available (or every predictor fails).  This function
     is offline-safe: with no predictors installed it emits a warning and returns.
     """
-    out_dir = Path(out_dir)
+    # Absolute: run_command sets cwd=out_dir, so relative predictor paths would
+    # be re-rooted under it and the predictor could not open them.
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     fasta = out_dir / f"{record.id}.fasta"
     fasta.write_text(record.to_fasta(), encoding="utf-8")

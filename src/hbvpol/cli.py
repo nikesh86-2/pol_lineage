@@ -92,7 +92,10 @@ def main(argv: list[str] | None = None) -> int:
     # after interleaved optionals).
     args, extras = parser.parse_known_args(argv)
     overrides = [*args.overrides, *(token for token in extras if "=" in token)]
-    root = Path(args.root)
+    # Resolve the root once. Stages set cwd for external tools, so a relative
+    # root (e.g. `--root .` from the Snakefile/SLURM) would otherwise yield
+    # relative stage/input paths that get re-rooted under that cwd and fail.
+    root = Path(args.root).resolve()
     config = load_config(args.config, overrides=overrides, root=root)
 
     # A publication run must not silently fall back to pure-Python stand-ins.

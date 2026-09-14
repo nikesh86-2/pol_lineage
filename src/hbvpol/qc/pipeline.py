@@ -25,6 +25,7 @@ from ..pipeline import (
     output_dir,
     run_command,
     stage_dir,
+    strict_tools,
 )
 from .circularise import orient_all
 from .deduplicate import dereplicate
@@ -52,8 +53,10 @@ def _dereplicate_records(records, config, workdir: Path):
         return dereplicate(records, identity=identity), "exact"
 
     if have_executable("cd-hit-est"):
-        in_fasta = write_fasta(records, workdir / "derep_in.fasta")
-        out_fasta = workdir / "derep_out.fasta"
+        # Absolute paths: run_command sets cwd=workdir, so relative paths would
+        # be re-rooted under it and cd-hit-est could not open its input.
+        in_fasta = Path(write_fasta(records, workdir / "derep_in.fasta")).resolve()
+        out_fasta = (workdir / "derep_out.fasta").resolve()
         try:
             run_command(
                 [
@@ -72,6 +75,8 @@ def _dereplicate_records(records, config, workdir: Path):
                 return kept, "cd-hit-est"
             logger.warning("cd-hit-est produced no representatives; using exact dedup")
         except Exception as error:  # pragma: no cover - defensive
+            if strict_tools(config):
+                raise StageError(f"cd-hit-est failed: {error}") from error
             logger.warning("cd-hit-est failed (%s); using exact dedup", error)
 
     # Fallback: exact dedup, plus the approximate pass only when buckets are small.

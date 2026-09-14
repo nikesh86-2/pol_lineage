@@ -89,6 +89,9 @@ set -u
 
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 export HBVPOL="${HBVPOL:-python -m hbvpol.cli}"
+# Pin the hash seed so dict/set iteration order (and any output derived from it)
+# is identical across runs.
+export PYTHONHASHSEED=0
 
 # OpenRDP pins numpy<2 and lives in its own environment; expose its bin *after*
 # the active env so `openrdp` resolves without shadowing the pol env's python
@@ -135,11 +138,32 @@ fi
 
 record_tools() {
     echo "== external tools =="
-    for tool in mafft iqtree2 iqtree hyphy trimal cd-hit RDP5 3seq gmx; do
+    # Read the required set from the config so this report cannot drift from
+    # project.required_tools (a missing required tool is a hard failure in the
+    # pipeline).  The fallback mirrors the shipped default if parsing fails.
+    local required=""
+    required="$(
+        python -c 'import sys, yaml; c = yaml.safe_load(open(sys.argv[1])) or {}; print(" ".join(str(t) for t in (c.get("project") or {}).get("required_tools") or []))' \
+            "${CONFIG}" 2>/dev/null || true
+    )"
+    if [ -z "${required}" ]; then
+        required="mafft iqtree hyphy trimal plmc 3seq cd-hit-est"
+    fi
+    local tool
+    for tool in ${required}; do
         if command -v "${tool}" >/dev/null 2>&1; then
-            echo "  found   ${tool}"
+            echo "  found    ${tool} (required)"
         else
-            echo "  missing ${tool}"
+            echo "  MISSING  ${tool} (required)"
+        fi
+    done
+    # Optional tools: used automatically when present, skipped with a warning
+    # otherwise (see docs/external_tools.md).
+    for tool in openrdp rdp5 gmx colabfold_batch run_alphafold esm-fold; do
+        if command -v "${tool}" >/dev/null 2>&1; then
+            echo "  found    ${tool} (optional)"
+        else
+            echo "  missing  ${tool} (optional)"
         fi
     done
 }

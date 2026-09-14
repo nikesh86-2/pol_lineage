@@ -27,6 +27,7 @@ __all__ = [
     "available_cpus",
     "effective_threads",
     "verify_required_tools",
+    "strict_tools",
     "StageError",
 ]
 
@@ -105,6 +106,17 @@ def verify_required_tools(config: Mapping[str, object]) -> None:
         )
 
 
+def strict_tools(config: Mapping[str, object]) -> bool:
+    """Whether a degraded external-tool fallback must be a hard error.
+
+    :func:`verify_required_tools` only catches *missing* binaries.  A publication
+    run also wants a crash, a timeout or unparseable output to fail loudly rather
+    than silently substituting a heuristic, so set ``project.strict_tools: true``
+    alongside a populated ``project.required_tools``.
+    """
+    return bool(get(config, "project.strict_tools", False))
+
+
 def require_executable(name: str, hint: str = "") -> str:
     """Return the path to an executable or raise a helpful error."""
     path = shutil.which(name)
@@ -124,11 +136,14 @@ def run_command(
     stderr_path: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     check: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess:
     """Run an external tool, tee-ing stdout/stderr to a log file if given.
 
     Commands are passed as argument vectors (never ``shell=True``) so that
-    user-supplied metadata cannot be interpreted by the shell.
+    user-supplied metadata cannot be interpreted by the shell.  ``timeout``
+    bounds the wall-clock run (seconds); on expiry ``subprocess.TimeoutExpired``
+    is raised so a caller can fall back to any partial output already written.
     """
     argv = shlex.split(command) if isinstance(command, str) else list(command)
     full_env = {**os.environ, **(env or {})}
@@ -142,7 +157,8 @@ def run_command(
             handle.write(f"# cwd={cwd}\n# {' '.join(shlex.quote(a) for a in argv)}\n\n")
             handle.flush()
             result = subprocess.run(
-                argv, cwd=cwd, env=full_env, stdout=handle, stderr=subprocess.STDOUT, text=True
+                argv, cwd=cwd, env=full_env, stdout=handle, stderr=subprocess.STDOUT,
+                text=True, timeout=timeout,
             )
     elif stderr_path is not None:
         # Capture stdout (the useful output, e.g. an alignment) while teeing
@@ -153,10 +169,11 @@ def run_command(
             err_handle.write(f"# cwd={cwd}\n# {' '.join(shlex.quote(a) for a in argv)}\n\n")
             err_handle.flush()
             result = subprocess.run(
-                argv, cwd=cwd, env=full_env, stdout=subprocess.PIPE, stderr=err_handle, text=True
+                argv, cwd=cwd, env=full_env, stdout=subprocess.PIPE, stderr=err_handle,
+                text=True, timeout=timeout,
             )
     else:
-        result = subprocess.run(argv, cwd=cwd, env=full_env, capture_output=True, text=True)
+        result = subprocess.run(argv, cwd=cwd, env=full_env, capture_output=True, text=True, timeout=timeout)
 
     if check and result.returncode != 0:
         detail = ""

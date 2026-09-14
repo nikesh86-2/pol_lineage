@@ -32,7 +32,8 @@ import pandas as pd
 from ..config import get
 from ..coordinates import reference_positions, reference_sequence_from_config
 from ..io import GenomeRecord, read_fasta, read_table, write_table
-from ..pipeline import get_logger, have_executable, output_dir, run_command, stage_dir
+from ..pipeline import StageError, get_logger, have_executable, output_dir, run_command, stage_dir, strict_tools
+from ..provenance import provenance
 from ..phylogeny.trees import _sanitize_name, newick_leaf_names
 from .covariation import COVARIATION_COLUMNS, EPISTASIS_COLUMNS, covarying_pairs, epistasis_pairs
 from .dualframe import (
@@ -220,7 +221,9 @@ def run_hyphy_method(
         logger.warning("no tree supplied for hyphy %s; selection sites will be empty", method)
         return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
 
-    workdir = Path(tree).parent
+    # Absolute: run_command sets cwd=outdir, so relative alignment/tree/output
+    # paths would be re-rooted under it and HyPhy could not open them.
+    workdir = Path(tree).parent.resolve()
     outdir = workdir / "hyphy"
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -248,7 +251,7 @@ def run_hyphy_method(
             [
                 "hyphy", str(method),
                 "--alignment", str(alignment_path),
-                "--tree", str(hyphy_tree),
+                "--tree", str(Path(hyphy_tree).resolve()),
                 "--output", str(output_path),
             ],
             cwd=outdir,
@@ -259,6 +262,8 @@ def run_hyphy_method(
         rows = _parse_hyphy_sites(payload, str(method))
     except Exception as error:
         logger.warning("hyphy %s failed (%s); writing empty selection sites", method, error)
+        if strict_tools(config):
+            raise StageError(f"hyphy {method} failed: {error}") from error
         return pd.DataFrame(columns=_SITE_BASE_COLUMNS)
 
     if not rows:
@@ -491,6 +496,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "n_epistasis": int(len(epistasis)),
         "n_genotype_sites": int(len(genotype)),
         "n_resistance": int(len(resistance)),
+        "provenance": provenance(["hyphy", "plmc"]),
     }
     summary_path = outdir / "selection_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

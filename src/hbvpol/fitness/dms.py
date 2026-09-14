@@ -346,9 +346,16 @@ def score_criteria(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         covariation = pd.Series(False, index=result.index)
     result["supported_covariation"] = covariation.fillna(False).astype(bool)
 
-    # not explained by the surface frame
-    if "surface_consequence" in result.columns:
-        consequence = result["surface_consequence"].astype("string").str.lower()
+    # not explained by the surface frame.  Prefer the dual-frame codon class
+    # (`consequence_class`, the documented source); fall back to the DMS-annotated
+    # `surface_consequence` when a table only carries the latter.
+    consequence_col = next(
+        (column for column in ("consequence_class", "surface_consequence")
+         if column in result.columns),
+        None,
+    )
+    if consequence_col is not None:
+        consequence = result[consequence_col].astype("string").str.lower()
         not_explained = ~consequence.isin(_SURFACE_EXPLAINED)
         not_explained = not_explained.fillna(False)
     else:

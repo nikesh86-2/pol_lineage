@@ -96,7 +96,9 @@ def run_openrdp(alignment, config, workdir) -> pd.DataFrame:
         methods = [methods]
     methods = [str(method).strip().lower() for method in methods if str(method).strip()]
 
-    out_csv = workdir / "openrdp.csv"
+    # Absolute: run_command sets cwd=workdir, so a relative -o would be
+    # re-rooted under it and OpenRDP could not create its report.
+    out_csv = (workdir / "openrdp.csv").resolve()
     # Positional alignment first, then the greedy -m list, then other options.
     argv = [executable_name, str(alignment_path)]
     if methods:
@@ -106,7 +108,7 @@ def run_openrdp(alignment, config, workdir) -> pd.DataFrame:
     cfg_path = get(config, "recombination.openrdp.cfg")
     if cfg_path:
         path = Path(str(cfg_path))
-        argv += ["-c", str(path if path.is_absolute() else (workdir / path))]
+        argv += ["-c", str(path if path.is_absolute() else (workdir / path).resolve())]
     seed = get(config, "recombination.openrdp.seed")
     if seed not in (None, ""):
         argv += ["-s", str(seed)]

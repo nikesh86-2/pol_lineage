@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ..config import get
 from ..io import GenomeRecord, write_fasta
-from ..pipeline import effective_threads, get_logger, run_command
+from ..pipeline import StageError, effective_threads, get_logger, run_command, strict_tools
 from .align import as_pairs
 from .trees import _iqtree_executable
 
@@ -116,6 +116,7 @@ def _iqtree_ancestral(tree_path, alignment, config, out_path: Path) -> dict[str,
     alignment_path = (workdir / f"{out_path.stem}.fasta").resolve()
     write_fasta([GenomeRecord(id=name, seq=seq) for name, seq in pairs], alignment_path)
     threads = effective_threads(config)
+    seed = int(get(config, "project.seed", 1) or 1)
     pre = (workdir / out_path.stem).resolve()
     tree_path = Path(tree_path).resolve()
     run_command(
@@ -126,6 +127,7 @@ def _iqtree_ancestral(tree_path, alignment, config, out_path: Path) -> dict[str,
             "-as",
             "-m", "MFP",
             "-T", str(max(1, threads)),
+            "--seed", str(seed),
             "-pre", str(pre),
             "-redo",
         ],
@@ -189,6 +191,11 @@ def reconstruct_ancestral(tree_path, alignment, out_fasta, config) -> Path:
             records = [GenomeRecord(id=name, seq=seq) for name, seq in inferred.items()]
             write_fasta(records, out)
             return out
+        if _iqtree_executable() is not None and strict_tools(config):
+            raise StageError(
+                "IQ-TREE ancestral reconstruction produced no states; refusing the "
+                "parsimony fallback (project.strict_tools)"
+            )
 
     tree_newick = Path(tree_path).read_text(encoding="utf-8")
     ancestral = parsimony_ancestral(tree_newick, alignment)

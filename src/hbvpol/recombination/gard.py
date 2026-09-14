@@ -10,6 +10,7 @@ time and its absence only produces a warning plus an empty frame.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -27,35 +28,95 @@ def _empty() -> pd.DataFrame:
     return pd.DataFrame(columns=BREAKPOINT_COLUMNS)
 
 
-def _collect_breakpoints(node, acc: set[int]) -> None:
-    """Recursively collect integer breakpoint positions from a GARD JSON tree."""
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if "breakpoint" in str(key).lower():
-                if isinstance(value, (list, tuple)):
-                    for item in value:
-                        if isinstance(item, (int, float)) and not isinstance(item, bool):
-                            if item >= 0:
-                                acc.add(int(item))
-                elif isinstance(value, dict):
-                    for nested_key in value:
-                        try:
-                            position = int(float(nested_key))
-                            if position >= 0:
-                                acc.add(position)
-                        except (TypeError, ValueError):
-                            continue
-            _collect_breakpoints(value, acc)
-    elif isinstance(node, (list, tuple)):
-        for item in node:
-            _collect_breakpoints(item, acc)
+def _as_step(key: object) -> int:
+    """Order GARD's string step/model keys numerically (``-1`` if non-numeric)."""
+    try:
+        return int(str(key))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _positions(value: object) -> list[int]:
+    """Positive integer positions from a (possibly nested) GARD position list."""
+    positions: set[int] = set()
+    if not isinstance(value, (list, tuple)):
+        return []
+    for item in value:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, (int, float)):
+            if item > 0:
+                positions.add(int(item))
+        elif isinstance(item, (list, tuple)):
+            for position in item:
+                if isinstance(position, bool):
+                    continue
+                if isinstance(position, (int, float)) and position > 0:
+                    positions.add(int(position))
+    return sorted(positions)
+
+
+def _improvement_breakpoints(improvements: object) -> list[int]:
+    """Breakpoints of the selected model, from GARD's ``improvements``."""
+    if not isinstance(improvements, dict) or not improvements:
+        return []
+    entry = improvements[max(improvements, key=_as_step)]
+    if not isinstance(entry, dict):
+        return []
+    return _positions(entry.get("breakpoints"))
+
+
+def _partition_breakpoints(breakpoint_data: object) -> list[int]:
+    """Fallback: breakpoints from GARD's partition intervals.
+
+    ``breakpointData`` is keyed by *partition*; each value's ``bps`` lists that
+    partition's interval(s), and the partitions tile the alignment in order.  The
+    breakpoints are therefore the end of every partition but the last.  Used only
+    when ``improvements`` is absent (older GARD reports).
+    """
+    if not isinstance(breakpoint_data, dict) or not breakpoint_data:
+        return []
+    intervals: list[tuple[float, int]] = []
+    for entry in breakpoint_data.values():
+        bps = entry.get("bps") if isinstance(entry, dict) else None
+        if not isinstance(bps, (list, tuple)):
+            continue
+        for interval in bps:
+            if not isinstance(interval, (list, tuple)) or not interval:
+                continue
+            start, end = interval[0], interval[-1]
+            if not isinstance(start, (int, float)) or isinstance(start, bool):
+                continue
+            if not isinstance(end, (int, float)) or isinstance(end, bool) or end <= 0:
+                continue
+            intervals.append((start, int(end)))
+    if len(intervals) < 2:
+        return []
+    intervals.sort()
+    return sorted({end for _, end in intervals[:-1]})
+
+
+def _selected_breakpoints(data: object) -> list[int]:
+    """Selected breakpoints from a parsed GARD JSON report.
+
+    GARD's step-up procedure records each accepted model under ``improvements``
+    (keyed by step), listing the breakpoints it added; the highest step is the
+    selected model.  ``breakpointData`` holds the resulting partition intervals
+    and ``siteBreakPointSupport`` the per-site score for the *next* candidate,
+    so neither may be mined for breakpoint positions.
+    """
+    if not isinstance(data, dict):
+        return []
+    if "improvements" in data:
+        return _improvement_breakpoints(data.get("improvements"))
+    return _partition_breakpoints(data.get("breakpointData"))
 
 
 def parse_gard_json(path: str | Path) -> pd.DataFrame:
     """Parse a HyPhy GARD JSON report into the tidy breakpoint schema.
 
-    Breakpoint positions are located recursively under any key containing
-    "breakpoint".  GARD does not assign parent partners, so ``partner`` is
+    The breakpoints of the selected model are read from ``improvements`` (its
+    highest step).  GARD does not assign parent partners, so ``partner`` is
     empty and rows are labelled with a scan-level ``recombinant_id``.
     """
     path = Path(path)
@@ -68,8 +129,7 @@ def parse_gard_json(path: str | Path) -> pd.DataFrame:
         logger.warning("could not read GARD JSON %s: %s", path, error)
         return _empty()
 
-    positions: set[int] = set()
-    _collect_breakpoints(data, positions)
+    positions = _selected_breakpoints(data)
     if not positions:
         return _empty()
 
@@ -83,7 +143,7 @@ def parse_gard_json(path: str | Path) -> pd.DataFrame:
             "support": 1.0,
             "region": "",
         }
-        for position in sorted(positions)
+        for position in positions
     ]
     return pd.DataFrame(rows, columns=BREAKPOINT_COLUMNS)
 
@@ -93,7 +153,11 @@ def run_gard(alignment, config, workdir) -> pd.DataFrame:
 
     Honours ``recombination.gard.rate_variation`` and
     ``recombination.gard.n_categories`` by passing the corresponding HyPhy
-    options.  Fails soft when HyPhy is unavailable.
+    options.  ``recombination.gard.max_breakpoints`` caps the step-up search and
+    ``recombination.gard.timeout_s`` bounds the wall-clock run; because GARD
+    spools its JSON after every breakpoint search, a capped or timed-out run
+    still returns the best partitions found so far.  Fails soft when HyPhy is
+    unavailable.
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -122,12 +186,35 @@ def run_gard(alignment, config, workdir) -> pd.DataFrame:
         argv += ["--rate-variation", str(rate_variation)]
     if n_categories:
         argv += ["--rate-classes", str(int(n_categories))]
+    max_breakpoints = get(config, "recombination.gard.max_breakpoints")
+    if max_breakpoints not in (None, ""):
+        argv += ["--max-breakpoints", str(int(max_breakpoints))]
+
+    timeout_raw = get(config, "recombination.gard.timeout_s")
+    try:
+        timeout = float(timeout_raw)
+    except (TypeError, ValueError):
+        timeout = None
+    if timeout is not None and timeout <= 0:
+        timeout = None
+
+    # Drop any report left by a previous run so a failed or timed-out invocation
+    # cannot be mistaken for a stale success.
+    json_out.unlink(missing_ok=True)
 
     try:
-        run_command(argv, cwd=workdir, log_path=workdir / "gard.log", check=False)
+        run_command(
+            argv, cwd=workdir, log_path=workdir / "gard.log", check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        # GARD spools its JSON after each breakpoint search, so a bounded run
+        # still yields the best partitions found so far.
+        logger.warning(
+            "GARD exceeded recombination.gard.timeout_s=%s s; using the partial report",
+            timeout,
+        )
     except StageError as error:  # pragma: no cover - external tool behaviour
         logger.warning("GARD invocation failed: %s", error)
-        return _empty()
 
     if not json_out.exists():
         logger.warning("GARD produced no JSON at %s; skipping", json_out)

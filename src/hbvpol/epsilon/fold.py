@@ -25,7 +25,7 @@ from pathlib import Path
 
 from ..config import get
 from ..io import GenomeRecord
-from ..pipeline import get_logger, have_executable, run_command
+from ..pipeline import StageError, get_logger, have_executable, run_command, strict_tools
 
 __all__ = [
     "DEFAULT_EPSILON_SPAN",
@@ -221,6 +221,10 @@ def _run_rnafold(seq: str, config: dict):
     """Fold with ViennaRNA RNAfold; return ``(dotbracket, mfe)`` or ``None``."""
     executable = str(get(config, "epsilon.rnafold.executable", "RNAfold") or "RNAfold")
     if not have_executable(executable):
+        if strict_tools(config):
+            raise StageError(
+                f"RNAfold executable {executable!r} not found (project.strict_tools)"
+            )
         return None
     import tempfile
 
@@ -230,6 +234,8 @@ def _run_rnafold(seq: str, config: dict):
         try:
             result = run_command([executable, "--noPS", str(fasta)], check=True)
         except Exception as error:  # pragma: no cover - external tool
+            if strict_tools(config):
+                raise StageError(f"RNAfold failed: {error}") from error
             logger.warning("RNAfold failed (%s); using Nussinov fallback", error)
             return None
     stdout = result.stdout or ""
@@ -244,6 +250,8 @@ def _run_rnafold(seq: str, config: dict):
             if match:
                 energy = float(match.group(1))
             return token, energy
+    if strict_tools(config):
+        raise StageError("could not parse RNAfold output (project.strict_tools)")
     logger.warning("could not parse RNAfold output; using Nussinov fallback")
     return None
 

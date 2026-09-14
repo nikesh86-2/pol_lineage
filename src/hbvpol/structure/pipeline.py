@@ -9,6 +9,7 @@ Outputs (``<outroot>/structure/``):
     model_manifest.tsv
     metrics.tsv
     hinges.tsv
+    interface_residues.tsv
     md/pocket_persistence.tsv
     md/md_manifest.tsv
 
@@ -28,8 +29,9 @@ import pandas as pd
 from ..config import get
 from ..io import write_table
 from ..pipeline import get_logger, stage_dir
+from ..provenance import provenance
 from .md import CAVITY_COLUMNS, MD_MANIFEST_COLUMNS, build_md_manifest, pocket_persistence
-from .metrics import candidate_hinges, compute_metrics, metrics_table, plddt_from_pdb
+from .metrics import candidate_hinges, compute_metrics, interface_residues, metrics_table, plddt_from_pdb
 from .models import build_model_manifest, run_predictor, sequence_for_lineage
 
 __all__ = ["run"]
@@ -37,6 +39,10 @@ __all__ = ["run"]
 logger = get_logger("structure")
 
 HINGE_COLUMNS = ["model_id", "hinge_start", "hinge_end", "length", "plddt_mean", "plddt_min"]
+
+#: Per-residue nucleic-acid interface flags.  ``pol_position`` is the file-order
+#: residue index, matching hinges and the atlas key.
+INTERFACE_COLUMNS = ["model_id", "pol_position", "min_distance", "is_interface"]
 
 
 def _empty_hinges() -> pd.DataFrame:
@@ -109,6 +115,29 @@ def run(config: dict, root) -> dict[str, Path]:
     hinges = pd.DataFrame(hinge_rows, columns=HINGE_COLUMNS) if hinge_rows else _empty_hinges()
     hinges_path = write_table(hinges, outdir / "hinges.tsv")
 
+    # --- nucleic-acid interface residues ------------------------------------
+    cutoff = float(get(config, "structure.interface_cutoff", 4.5) or 4.5)
+    interface_rows: list[dict[str, object]] = []
+    for path in _iter_models(models_dir):
+        model_id = _model_id(path, models_dir)
+        try:
+            distances = interface_residues(path)
+        except Exception as error:  # pragma: no cover - defensive
+            logger.warning("could not compute interface residues for %s: %s", path, error)
+            continue
+        for index, distance in enumerate(distances, start=1):
+            interface_rows.append({
+                "model_id": model_id,
+                "pol_position": int(index),
+                "min_distance": float(distance),
+                "is_interface": bool(np.isfinite(distance) and distance <= cutoff),
+            })
+    interface = (
+        pd.DataFrame(interface_rows, columns=INTERFACE_COLUMNS)
+        if interface_rows else pd.DataFrame(columns=INTERFACE_COLUMNS)
+    )
+    interface_path = write_table(interface, outdir / "interface_residues.tsv")
+
     # --- MD plan ------------------------------------------------------------
     md_dir = outdir / "md"
     md_dir.mkdir(parents=True, exist_ok=True)
@@ -129,10 +158,12 @@ def run(config: dict, root) -> dict[str, Path]:
         "n_skipped": skipped,
         "n_models_present": int(len(records)),
         "n_hinges": int(len(hinges)),
+        "n_interface_residues": int(interface["is_interface"].sum()) if len(interface) else 0,
         "n_md_models": int(len(md_manifest)),
         "n_persistent_cavities": int(persistence["passes"].sum()) if len(persistence) else 0,
         "hinge_plddt": threshold,
         "predictors": list(get(config, "structure.strategies", []) or []),
+        "provenance": provenance(["colabfold_batch", "run_alphafold", "esm-fold"]),
     }
     summary_path = outdir / "structure_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -142,6 +173,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "model_manifest": manifest_path,
         "metrics": metrics_path,
         "hinges": hinges_path,
+        "interface_residues": interface_path,
         "md_manifest": md_manifest_path,
         "pocket_persistence": persistence_path,
         "summary": summary_path,

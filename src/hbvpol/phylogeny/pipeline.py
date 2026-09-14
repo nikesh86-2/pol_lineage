@@ -41,6 +41,7 @@ from ..config import get
 from ..domain import DEFAULT_DOMAIN_SPANS, PolDomain, translate
 from ..io import GenomeRecord, read_fasta, read_table, write_fasta, write_table
 from ..pipeline import get_logger, output_dir, stage_dir
+from ..provenance import provenance
 from .align import as_pairs, read_alignment
 from .ancestral import reconstruct_ancestral
 from .trees import _iqtree_executable, infer_tree, parse_tree_summary
@@ -321,6 +322,7 @@ def run(config: dict, root) -> dict[str, Path]:
         "domain_trees": {name: str(path) for name, path in domain_trees.items()},
         "ancestral": {name: str(path) for name, path in ancestral_fastas.items()},
         "n_ancestral_states": len(ancestral_rows),
+        "provenance": provenance(["iqtree"]),
     }
     summary_path = outdir / "tree_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

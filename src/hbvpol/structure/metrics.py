@@ -37,6 +37,7 @@ __all__ = [
     "conserved_packing",
     "compute_metrics",
     "candidate_hinges",
+    "interface_residues",
 ]
 
 #: Fallback pLDDT threshold when ``structure.hinge_plddt`` is absent.
@@ -300,6 +301,34 @@ def catalytic_geometry(path: str | Path, motifs: dict | None = None) -> float | 
     a = np.asarray(tyro_coords, dtype=float)
     b = np.asarray(ymdd_coords, dtype=float)
     return float(np.sqrt(((a[:, None, :] - b[None, :, :]) ** 2).sum(axis=-1)).min())
+
+
+def interface_residues(path: str | Path) -> np.ndarray:
+    """Per-residue minimum distance (Å) from each protein residue to a nucleic atom.
+
+    Returned in file order, matching :func:`plddt_from_pdb` and the hinge/geometry
+    metrics, so index *i* is the same residue.  ``np.inf`` marks a residue with no
+    nucleic-acid atoms in the structure; an empty array means the file carries no
+    nucleic chain or could not be parsed.  The caller applies the cutoff.
+    """
+    structure = _load_structure(path)
+    nucleic = [
+        list(atom.get_coord())
+        for _, _, _, atoms in _nucleic_residues(structure)
+        for atom in atoms
+    ]
+    if not nucleic:
+        return np.zeros(0, dtype=float)
+    nucleic_coords = np.asarray(nucleic, dtype=float)
+    distances: list[float] = []
+    for _, _, _, atoms in _protein_residues(structure):
+        if not atoms:
+            distances.append(np.inf)
+            continue
+        coords = np.asarray([list(atom.get_coord()) for atom in atoms], dtype=float)
+        diff = coords[:, None, :] - nucleic_coords[None, :, :]
+        distances.append(float(np.sqrt((diff ** 2).sum(axis=-1)).min()))
+    return np.asarray(distances, dtype=float)
 
 
 def nucleic_acid_compatibility(path: str | Path, nucleic_chain_ids=None, cutoff: float = 4.5) -> dict:

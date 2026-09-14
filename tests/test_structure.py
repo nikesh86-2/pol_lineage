@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hbvpol.io import GenomeRecord, write_fasta
-from hbvpol.structure.metrics import candidate_hinges, compute_metrics, plddt_from_pdb
+from hbvpol.structure.metrics import candidate_hinges, compute_metrics, interface_residues, plddt_from_pdb
 from hbvpol.structure.models import build_model_manifest, sequence_for_lineage
 
 
@@ -159,3 +159,28 @@ def test_sequence_for_lineage_reads_ancestral_file(tmp_path):
 def test_sequence_for_lineage_returns_none_when_absent(tmp_path, caplog):
     config = {"project": {"output_root": "output"}}
     assert sequence_for_lineage("Z", config, tmp_path) is None
+
+
+# --------------------------------------------------------------------------- #
+# nucleic-acid interface residues
+# --------------------------------------------------------------------------- #
+def test_interface_residues_measures_distance_to_nucleic_chain(tmp_path):
+    pytest.importorskip("Bio.PDB")
+    path = _write_pdb(tmp_path / "model.pdb", [90.0, 90.0, 90.0])
+    # Place a nucleic atom next to residue 2's backbone (residues are 3.8 A apart).
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_atom_line(100, "P", "DA", "N", 1, (7.6, 3.5, 0.0), 0.0, "P"))
+        handle.write("TER\n")
+
+    distances = interface_residues(path)
+
+    assert distances.shape == (3,)
+    assert distances[1] < 1.0
+    assert distances[0] > 3.0
+    assert distances[2] > 3.0
+
+
+def test_interface_residues_empty_without_nucleic_chain(tmp_path):
+    pytest.importorskip("Bio.PDB")
+    path = _write_pdb(tmp_path / "model.pdb", [90.0, 90.0])
+    assert interface_residues(path).size == 0

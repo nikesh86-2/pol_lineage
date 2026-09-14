@@ -121,11 +121,14 @@ def _write_upstream(root: Path) -> None:
         "entropy": [0.2, 1.5, 0.3, 1.2],
     }).to_csv(output / "selection" / "entropy.tsv", sep="\t", index=False)
 
+    # Documented covariation schema: pair-indexed, with position_i/position_j/score.
     pd.DataFrame({
-        "lineage": ["A", "B"],
-        "position": [100, 100],
-        "support": [0.4, 0.3],
-        "partner": [200, 210],
+        "lineage": ["A", "B", "A"],
+        "position_i": [100, 100, 200],
+        "position_j": [200, 210, 100],
+        "method": ["apc", "apc", "apc"],
+        "score": [0.4, 0.3, 0.4],
+        "pvalue": [0.01, 0.02, 0.01],
     }).to_csv(output / "selection" / "covariation.tsv", sep="\t", index=False)
 
     pd.DataFrame({
@@ -195,6 +198,11 @@ def test_atlas_pipeline_run_writes_contract_artefacts(tmp_path):
     if len(ranked) > 1:
         assert ranked["score"].is_monotonic_decreasing
 
+    # Covariation carries a partner, so the interaction network is populated.
+    network = pd.read_csv(artefacts["conserved_interactions"], sep="\t")
+    assert len(network) >= 1
+    assert "partner_position" in network.columns
+
     summary = json.loads(Path(artefacts["summary"]).read_text())
     assert summary["key"] == ["lineage", "pol_position"]
     assert summary["n_atlas_rows"] == len(atlas)
@@ -214,3 +222,56 @@ def test_atlas_pipeline_emits_valid_atlas_without_upstream(tmp_path):
     assert "pol_position" in atlas.columns
     # A sparse but valid report must still be produced.
     assert Path(artefacts["report"]).read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
+
+
+# --------------------------------------------------------------------------- #
+# contract: one row per (lineage, pol_position)
+# --------------------------------------------------------------------------- #
+def test_atlas_one_row_per_key_with_overlapping_hinges(tmp_path):
+    pytest.importorskip("pyarrow")
+    _write_upstream(tmp_path)
+    hinges_path = tmp_path / "output" / "structure" / "hinges.tsv"
+    hinges = pd.read_csv(hinges_path, sep="\t")
+    # A second model of the *same* lineage with an overlapping hinge range.
+    extra = hinges.copy()
+    extra["model_id"] = "apo__A__colabfold__seed2"
+    extra["hinge_start"] = 200
+    extra["hinge_end"] = 204
+    pd.concat([hinges, extra], ignore_index=True).to_csv(hinges_path, sep="\t", index=False)
+
+    artefacts = atlas_pipeline.run(_config(), tmp_path)
+    atlas = pd.read_parquet(artefacts["atlas_parquet"])
+
+    assert not atlas.duplicated(["lineage", "pol_position"]).any()
+    a_positions = set(atlas.loc[atlas["lineage"] == "A", "pol_position"])
+    assert {198, 200, 202, 204}.issubset(a_positions)
+
+
+def test_collapse_duplicates_keeps_disruptive_rna_element():
+    frame = pd.DataFrame({
+        "lineage": ["A", "A"],
+        "pol_position": [5, 5],
+        "consequence_class": ["synonymous_both", "disruptive_rna_element"],
+    })
+    collapsed = atlas_pipeline._collapse_duplicates(frame)
+    assert len(collapsed) == 1
+    assert collapsed.iloc[0]["consequence_class"] == "disruptive_rna_element"
+
+
+def test_atlas_consumes_interface_residues(tmp_path):
+    pytest.importorskip("pyarrow")
+    _write_upstream(tmp_path)
+    pd.DataFrame({
+        "model_id": ["apo__A__colabfold__seed1"],
+        "pol_position": [100],
+        "min_distance": [3.0],
+        "is_interface": [True],
+    }).to_csv(
+        tmp_path / "output" / "structure" / "interface_residues.tsv", sep="\t", index=False
+    )
+
+    artefacts = atlas_pipeline.run(_config(), tmp_path)
+    atlas = pd.read_parquet(artefacts["atlas_parquet"])
+    row = atlas[(atlas["lineage"] == "A") & (atlas["pol_position"] == 100)]
+    assert len(row) == 1
+    assert bool(row.iloc[0]["is_interface"]) is True

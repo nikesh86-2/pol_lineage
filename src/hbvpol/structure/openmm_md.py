@@ -154,12 +154,17 @@ def run_openmm_md(pdb_path, outdir, config: Mapping[str, object] | None = None) 
         nonbondedCutoff=1.0 * unit.nanometer,
         constraints=HBonds,
     )
-    system.addForce(MonteCarloBarostat(1.0 * unit.bar, temperature * unit.kelvin))
+    # Pin the integrator/barostat RNG so a trajectory is reproducible.
+    seed = int(get(config, "project.seed", 1) or 1)
+    barostat = MonteCarloBarostat(1.0 * unit.bar, temperature * unit.kelvin)
+    barostat.setRandomNumberSeed(seed)
+    system.addForce(barostat)
     integrator = LangevinMiddleIntegrator(
         temperature * unit.kelvin,
         friction / unit.picosecond,
         timestep_fs * unit.femtoseconds,
     )
+    integrator.setRandomNumberSeed(seed)
     platform = _select_platform(platform_name)
     simulation = Simulation(
         modeller.topology, system, integrator, platform

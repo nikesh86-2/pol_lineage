@@ -397,3 +397,58 @@ def test_covariation_on_protein_reports_residue_positions():
     assert int(frame["position_j"].max()) <= 4
     assert set(frame["position_i"]) == {2}
     assert set(frame["position_j"]) == {3}
+
+
+# --------------------------------------------------------------------------- #
+# strict tools / fail loud
+# --------------------------------------------------------------------------- #
+def test_strict_tools_flag_reads_config():
+    from hbvpol.pipeline import strict_tools
+
+    assert strict_tools({}) is False
+    assert strict_tools({"project": {"strict_tools": True}}) is True
+
+
+def test_strict_tools_escalates_cd_hit_failure(tmp_path, monkeypatch):
+    from hbvpol.qc import pipeline as qc_pipeline
+
+    monkeypatch.setattr(qc_pipeline, "have_executable", lambda name: True)
+
+    def boom(*args, **kwargs):
+        raise StageError("cd-hit-est exploded")
+
+    monkeypatch.setattr(qc_pipeline, "run_command", boom)
+    records = [GenomeRecord(id=f"s{i}", seq="ACGTACGT" * 4) for i in range(2)]
+    config = {"qc": {"dereplicate_identity": 0.9}, "project": {"strict_tools": True}}
+    with pytest.raises(StageError):
+        qc_pipeline._dereplicate_records(records, config, tmp_path)
+
+
+def test_cd_hit_failure_falls_back_when_not_strict(tmp_path, monkeypatch):
+    from hbvpol.qc import pipeline as qc_pipeline
+
+    monkeypatch.setattr(qc_pipeline, "have_executable", lambda name: True)
+
+    def boom(*args, **kwargs):
+        raise StageError("cd-hit-est exploded")
+
+    monkeypatch.setattr(qc_pipeline, "run_command", boom)
+    records = [GenomeRecord(id=f"s{i}", seq="ACGTACGT" * 4) for i in range(2)]
+    kept, _ = qc_pipeline._dereplicate_records(
+        records, {"qc": {"dereplicate_identity": 0.9}}, tmp_path
+    )
+    assert len(kept) == 1
+
+
+def test_require_backend_rejects_wrong_size_matrix(monkeypatch):
+    from hbvpol.selection import covariation
+
+    monkeypatch.setattr(covariation, "_try_external_dca", lambda records, config: np.zeros((3, 3)))
+    monkeypatch.setattr(covariation, "_subset_records", lambda records, columns: records)
+    alignment = [("s1", "MAAA"), ("s2", "MCCA"), ("s3", "MAAA"), ("s4", "MCCA")]
+    config = {"selection": {"covariation": {
+        "methods": ["dca"], "min_seqs": 0, "min_entropy": 0.0,
+        "max_positions": 50, "require_backend": True,
+    }}}
+    with pytest.raises(StageError):
+        covariation.covarying_pairs(alignment, config)
