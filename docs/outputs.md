@@ -20,7 +20,7 @@ output/
                 pol_epsilon_coevolution.tsv  compatibility.tsv  epsilon_summary.json
   fitness/      dms_annotated.tsv  dms_candidates.tsv  fitness_summary.json
   structure/    models/  model_manifest.tsv  metrics.tsv  hinges.tsv
-                md/md_manifest.tsv  md/pocket_persistence.tsv
+                interface_residues.tsv  md/md_manifest.tsv  md/pocket_persistence.tsv
   atlas/        residue_atlas.parquet  residue_atlas.tsv  ranked_targets.tsv
                 conserved_interactions.tsv  conformational_switches.tsv  report.html  atlas_summary.json
 ```
@@ -29,7 +29,9 @@ output/
 its `reference` sub-object into the config (config file < derived < explicit
 overrides), so QC, selection, epsilon and the atlas all use reference-exact
 Pol/S/C spans and the surface-frame offset. `qc/hbv_oriented.fasta` contains
-**only records that passed QC**.
+**only records that passed QC**. Each stage's `<stage>_summary.json` embeds a
+`provenance` block (the `hbvpol` version and the probed versions of the tools it
+used).
 
 ## Key table schemas
 
@@ -57,6 +59,7 @@ Pol/S/C spans and the surface-frame offset. `qc/hbv_oriented.fasta` contains
 | `structure/model_manifest.tsv` | `model_id, kind, state, lineage, strategy, seed, variant, rel_path, sequence_source` |
 | `structure/metrics.tsv` | `model, path, status, n_residues, plddt_mean, plddt_min, plddt_max, pae_mean, sasa_mean, orientation_angle_deg, n_domains, catalytic_distance, nucleic_has_chain, nucleic_contact_fraction, nucleic_min_distance, packing_correlation` |
 | `structure/hinges.tsv` | `model_id, hinge_start, hinge_end, length, plddt_mean, plddt_min` |
+| `structure/interface_residues.tsv` | `model_id, pol_position, min_distance, is_interface` |
 
 ## The residue atlas
 
@@ -89,8 +92,9 @@ lineage-specific.
 | `fst`, `genotype_informative` | Between-genotype differentiation and flag | selection |
 | `rt_mutation`, `drug_class`, `associated`, `canonical_motif` | Resistance annotation | selection |
 | `covariation_support`, `epistasis_support` | Max pair score over the position's partners | selection |
+| `covariation_partner` | Pol position of the top-scoring covariation partner (rebuilds `conserved_interactions.tsv`) | selection |
 | `conservation` | `1 − minmax(aa_entropy)` | atlas (derived) |
-| `is_hinge`, `is_interface` | Low-pLDDT hinge / predicted interface flags | structure |
+| `is_hinge`, `is_interface` | Low-pLDDT hinge / predicted nucleic-acid interface flags (from `structure/interface_residues.tsv`; all-`False` when no models exist, so `interface_or_hinge` reduces to hinges) | structure |
 | `conserved_deep_hepadna` | Conserved across the deep hepadnavirus alignment | fitness criteria |
 | `intolerant_dms` | Intolerant in the 2024 DMS map | fitness criteria |
 | `interface_or_hinge` | Structural criterion | fitness criteria |

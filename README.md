@@ -119,7 +119,7 @@ scripts/                  run_synthetic.py, profile_stages.py, locate_pol_domain
 workflow/Snakefile        Snakemake orchestration
 workflow/slurm/           SLURM batch scripts + usage
 output/reference/         derived reference_features.json (merged into config)
-tests/                    136 offline tests incl. full end-to-end
+tests/                    200+ offline tests incl. full end-to-end
 docs/                     methods, datasets, external tools, output contract
 ```
 
@@ -152,7 +152,8 @@ docs/                     methods, datasets, external tools, output contract
 * `fitness.*` — DMS map path and the six candidacy criteria.
 * `atlas.*` — join key, ranking weights, top-N targets.
 * `project.*` — output root, threads, seed, and `required_tools` (fail fast when
-  a tool is missing instead of silently using a pure-Python fallback).
+  a tool is missing instead of silently using a pure-Python fallback). Set
+  `strict_tools: true` to also make a *present-but-failing* tool a hard error.
 
 ---
 
@@ -168,7 +169,7 @@ full schema — including an atlas column dictionary — is in
 ## Testing
 
 ```bash
-pytest                 # 136 tests, fully offline
+pytest                 # 200+ tests, fully offline
 pytest tests/test_end_to_end.py -q   # full stage chain on synthetic data
 ```
 

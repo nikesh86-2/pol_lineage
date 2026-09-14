@@ -242,9 +242,12 @@ Status after wiring the reference into the pipeline:
 3. **Circularisation** — origin detection is on (`qc.detect_origin: true`) and
    anchored to the derived reference sequence, falling back to the configured
    constant when the seed is absent.
-4. **Offline fallbacks** — set `project.required_tools: [mafft, iqtree2, hyphy]`
-   to make a missing tool a hard, up-front error instead of a silent
-   pure-Python substitute.
+4. **Offline fallbacks** — set `project.required_tools` (default:
+   `[mafft, iqtree, hyphy, trimal, plmc, 3seq, cd-hit-est]`) to make a missing
+   tool a hard, up-front error instead of a silent pure-Python substitute. Also
+   set `project.strict_tools: true` so a *present-but-failing* tool (crash,
+   timeout, unparseable output) fails loudly rather than falling back to
+   Neighbor-Joining, Fitch parsimony, Nussinov folding or exact dedup.
 5. **Covariation capping** — the quadratic scan is still capped for
    tractability, but a real DCA backend is now wired. `pydca`/`plmDCA` is
    unmaintained, so the shipped backend is `hbvpol.selection.plmc_backend`,
@@ -260,6 +263,23 @@ Status after wiring the reference into the pipeline:
    strand. The Pol–ε compatibility heuristic remains uncalibrated; genotype I's
    row is lower-confidence (provisional/contested genotype).
 7. **The DMS map** — supplied (`resources/hbv_pol_dms_2024.tsv`).
+
+### Reproducibility (seeds, provenance, frozen inputs)
+
+* **Seeds.** `project.seed` is threaded to the tools that expose one: IQ-TREE
+  (`--seed`, for both tree inference and ancestral reconstruction) and OpenMM
+  (`setRandomNumberSeed` on the integrator and barostat). GARD (HyPhy), the
+  HyPhy per-site methods, `plmc` and the structural predictors expose no seed
+  flag, so their outputs are not bit-reproducible. The pure-Python subsamplers
+  are seeded with `project.seed`, and the SLURM script exports
+  `PYTHONHASHSEED=0` so set/dict iteration order is stable.
+* **Provenance.** Every stage summary embeds a `provenance` block (`hbvpol`
+  version plus the probed version of each tool the stage uses).
+* **Inputs are not frozen.** The GenBank/HBVdb/GLUE and deep-hepadnavirus
+  fetches are live. A publication run should pin a dated accession list (or ship
+  the fetched FASTA with checksums), pin the reference accession
+  (`reference.accession`, currently `NC_003977.2`) and pin the HBV-GLUE checkout
+  to a commit.
 
 ### Calibrating per-genotype spans (`hbvpol.calibrate`)
 

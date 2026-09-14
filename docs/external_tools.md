@@ -193,5 +193,12 @@ for t in mafft iqtree2 iqtree hyphy trimal cd-hit hmmsearch gmx RDP5 3seq; do
 done
 ```
 
-Stage summaries (`output/<stage>/*_summary.json`) record which tools actually
-ran, so a methods section can be written directly from the run.
+The stages that write a summary (`recombination`, `phylogeny`, `selection`,
+`epsilon`, `fitness`, `structure`, `atlas`) include a `provenance` block with the
+`hbvpol` version and the probed version of the external tools they use, so a
+methods section can be written directly from the run.  `qc`, `reference` and
+`datasets` do not write a summary.
+
+Set `project.strict_tools: true` (alongside a populated `project.required_tools`)
+to make a present-but-failing tool a hard error instead of a silent heuristic
+fallback (Neighbor-Joining, Fitch parsimony, Nussinov folding, exact dedup, ...).
